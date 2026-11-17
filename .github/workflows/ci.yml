@@ -1,0 +1,47 @@
+name: CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check formatting
+        shell: bash
+        run: |
+          files=$(gofmt -l cmd internal web)
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+        env:
+          CGO_ENABLED: '0'
+      - name: Unit tests
+        run: go test -count=1 ./...
+        env:
+          CGO_ENABLED: '0'
+      - name: Race tests
+        # Go's race instrumentation requires CGO; released binaries remain pure Go.
+        run: go test -race -count=1 ./...
+        env:
+          CGO_ENABLED: '1'
+      - name: Vulnerability check
+        shell: bash
+        run: |
+          if ! command -v govulncheck >/dev/null 2>&1; then
+            go install golang.org/x/vuln/cmd/govulncheck@latest
+          fi
+          "$(go env GOPATH)/bin/govulncheck" ./...
+      - name: Build
+        run: go build -trimpath ./cmd/muse-bridge
+        env:
+          CGO_ENABLED: '0'

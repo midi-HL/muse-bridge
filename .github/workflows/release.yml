@@ -1,0 +1,75 @@
+name: Release
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: windows, goarch: amd64, extension: .exe}
+          - {goos: windows, goarch: '386', extension: .exe}
+          - {goos: windows, goarch: arm64, extension: .exe}
+          - {goos: linux, goarch: amd64, extension: ''}
+          - {goos: linux, goarch: '386', extension: ''}
+          - {goos: linux, goarch: arm64, extension: ''}
+          - {goos: linux, goarch: arm, goarm: '7', extension: ''}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test on builder
+        run: go test ./...
+        env:
+          CGO_ENABLED: '0'
+      - name: Build release binary
+        shell: bash
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          VERSION: ${{ github.ref_name }}
+          OUTPUT: muse-bridge-${{ matrix.goos }}-${{ matrix.goarch }}${{ matrix.extension }}
+        run: |
+          mkdir -p artifacts
+          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o "artifacts/$OUTPUT" ./cmd/muse-bridge
+          (cd artifacts && sha256sum "$OUTPUT" > "$OUTPUT.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: muse-bridge-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: artifacts/*
+          if-no-files-found: error
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Verify artifacts and combine checksums
+        shell: bash
+        run: |
+          cd artifacts
+          for checksum in *.sha256; do sha256sum -c "$checksum"; done
+          cat *.sha256 > SHA256SUMS
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release create "$TAG" artifacts/* LICENSE NOTICE --verify-tag --generate-notes
