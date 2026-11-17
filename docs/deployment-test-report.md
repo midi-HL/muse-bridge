@@ -34,7 +34,7 @@
 ## 真实账号与外部依赖
 
 - 真实 Cookie 未写入源码、日志、报告或 CI。
-- 对提供的 Cookie 做过一次隔离 HTTP 导入尝试，HTTP 层返回泛化 400，未把它误判为 `invalid`，也未输出 Cookie。随后用同一文件内容做临时 core 导入诊断，核心解析和加密入库通过；因此问题尚未闭合到可宣称的真实协议探活。
+- 对提供的 Cookie 做过一次隔离运行进程导入尝试，客户端侧收到泛化 400，未把它误判为 `invalid`，也未输出 Cookie。随后使用同一文件内容直接调用当前 HTTP handler 的 `httptest` 回归诊断，导入和加密入库通过；因此已确认解析和 HTTP handler 本身可用，但真实 Muse 上游探活仍未执行/未闭合。
 - 未提供 Telegram Bot token、ASR 模型/云端密钥，Telegram、真实 Muse 回复、媒体生成、ASR、节点可用性和 ASUS 笔记本正式产物部署不能在本环境宣称通过。
 
 ## 18 项验收状态
