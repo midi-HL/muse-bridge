@@ -16,6 +16,7 @@ import (
 
 	"github.com/midi-HL/muse-bridge/internal/config"
 	"github.com/midi-HL/muse-bridge/internal/hatch"
+	"github.com/midi-HL/muse-bridge/internal/media"
 	"github.com/midi-HL/muse-bridge/internal/pool"
 	"github.com/midi-HL/muse-bridge/internal/secure"
 	"github.com/midi-HL/muse-bridge/internal/store"
@@ -32,6 +33,7 @@ type Service struct {
 	settings     map[string]any
 	settingsHook func(map[string]any) error
 	pool         *pool.Pool
+	media        *media.Processor
 	gate         chan struct{}
 	queueMu      sync.Mutex
 	queued       int
@@ -123,7 +125,13 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		cancel()
 		return nil, err
 	}
-	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, settings: settings, pool: p, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}}
+	mp, err := media.New(settings, filepath.Join(dataDir, "media"))
+	if err != nil {
+		cancel()
+		_ = p.Close()
+		return nil, err
+	}
+	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}}
 	return s, nil
 }
 
@@ -146,7 +154,17 @@ func (s *Service) Settings() map[string]any {
 	return publicSettings(s.settings)
 }
 func (s *Service) Schema() map[string]any {
-	return map[string]any{"settings": append([]config.Field(nil), config.Fields...), "operations": []string{"state", "settings", "settings.update", "accounts", "log"}}
+	return map[string]any{"settings": append([]config.Field(nil), config.Fields...), "operations": []string{
+		"state", "schema", "settings", "settings.update", "log",
+		"accounts", "accounts.list", "accounts.import", "accounts.update", "accounts.delete", "accounts.probe",
+		"nodes.save", "nodes.delete", "nodes.test", "nodes.probe",
+		"personas.save", "personas.delete",
+		"schedules.save", "schedules.delete",
+		"stickers.import", "stickers.update", "stickers.delete",
+		"backup.export", "backup.import",
+		"asr.test", "asr.download",
+		"sessions.history", "sessions.reset", "sessions.rename", "sessions.export", "chat.stop",
+	}}
 }
 func (s *Service) SetSettingsHook(fn func(map[string]any) error) {
 	s.settingsMu.Lock()
@@ -169,7 +187,23 @@ func (s *Service) State(ctx context.Context) (map[string]any, error) {
 			sessions = append(sessions, map[string]any{"id": item.ID, "platform": item.Platform, "user_id": item.UserID, "title": item.Title, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt})
 		}
 	}
-	return map[string]any{"accounts": s.pool.List(), "account_count": s.pool.Count(), "queue_depth": s.queueDepth(), "settings": s.Settings(), "sessions": sessions, "nodes": []any{}, "personas": []any{}, "stickers": []any{}, "schedules": []any{}, "logs": func() any { v, _ := s.db.Logs(ctx); return v }()}, nil
+	nodes, err := s.listNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	personas, err := s.listManaged(ctx, "persona")
+	if err != nil {
+		return nil, err
+	}
+	stickers, err := s.listManaged(ctx, "sticker")
+	if err != nil {
+		return nil, err
+	}
+	schedules, err := s.listManaged(ctx, "schedule")
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"accounts": s.pool.List(), "account_count": s.pool.Count(), "queue_depth": s.queueDepth(), "settings": s.Settings(), "sessions": sessions, "nodes": nodes, "personas": personas, "stickers": stickers, "schedules": schedules, "logs": func() any { v, _ := s.db.Logs(ctx); return v }()}, nil
 }
 
 func (s *Service) Action(ctx context.Context, name string, args map[string]any) (any, error) {
@@ -294,6 +328,34 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 	case "accounts.probe", "account.probe":
 		id, _ := args["id"].(string)
 		return s.pool.Probe(ctx, id)
+	case "nodes.save":
+		return s.saveNode(ctx, args)
+	case "nodes.delete":
+		return nil, s.deleteManaged(ctx, "node", args)
+	case "nodes.test", "nodes.probe":
+		return nil, errors.New("unsupported operation: node connectivity is not exposed by the remote service")
+	case "personas.save":
+		return s.savePersona(ctx, args)
+	case "personas.delete":
+		return nil, s.deleteManaged(ctx, "persona", args)
+	case "schedules.save":
+		return s.saveSchedule(ctx, args)
+	case "schedules.delete":
+		return nil, s.deleteManaged(ctx, "schedule", args)
+	case "stickers.import":
+		return nil, errors.New("unsupported operation: sticker import requires a Telegram sticker API")
+	case "stickers.update":
+		return s.updateSticker(ctx, args)
+	case "stickers.delete":
+		return nil, s.deleteManaged(ctx, "sticker", args)
+	case "backup.export":
+		return s.exportBackup(ctx, args)
+	case "backup.import":
+		return s.importBackup(ctx, args)
+	case "asr.test":
+		return s.testASR(ctx, args)
+	case "asr.download":
+		return s.downloadASR(ctx, args)
 	case "sessions.history":
 		id, _ := args["id"].(string)
 		var item sessionRecord

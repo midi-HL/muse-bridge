@@ -62,7 +62,7 @@ CLI 服务地址默认是 `http://127.0.0.1:8787`；远程明文 HTTP 被拒绝�
 
 ## 能力限制
 
-协议、账号池、文件物化和设置存储在 `internal/hatch`、`internal/pool`、`internal/core` 中；本层只负责 HTTP、CLI 和边界验证。当前 core 正在扩展的账号导入/探活、节点、会话历史、定时任务、贴纸、ASR、backup 等动作如果没有对应持久实现，会明确返回 `unsupported`，不会假成功。`tools`、MCP、本地 Agent、账号注册、验证码绕过不在项目范围。真实 Muse 账号测试必须在部署机本地进行，CI 不含任何凭证。
+协议、账号池、文件物化、设置、节点、人设、计划任务、会话和加密备份存储在 `internal/hatch`、`internal/pool`、`internal/core` 中；本层只负责 HTTP、CLI 和边界验证。节点连通性测试、Telegram 贴纸包自动导入和未配置 ASR 模型时会明确返回 `unsupported` 或配置错误，不会假成功。`tools`、MCP、本地 Agent、账号注册、验证码绕过不在项目范围。真实 Muse 账号测试必须在部署机本地进行，CI 不含任何凭证。
 
 ## CI 与发布
 
