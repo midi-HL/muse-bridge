@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.2` 已由 GitHub Actions 成功生成，七个矩阵目标均通过并发布 SHA-256 校验文件；该版本还包含 HTTP Cookie 导入回归测试。此前 `v0.1.0` 与 `v0.1.1` Release 也已成功生成。
+- Release：`v0.1.3` 已由 GitHub Actions 成功生成，七个矩阵目标均通过并发布 SHA-256 校验文件；该版本包含 HTTP Cookie 导入回归测试、节点/人设/计划任务持久化、加密备份覆盖回滚和 ASR 安全边界。此前 `v0.1.0`、`v0.1.1` 与 `v0.1.2` Release 也已成功生成。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
@@ -14,7 +14,7 @@
 |---|---|---|
 | `gofmt -w cmd internal web` | 通过 | 无格式残留 |
 | `go vet ./...` | 通过 | Telegram JSON tag 重复问题已修复 |
-| `go test -count=1 ./...` | 通过 | 协议、core、HTTP、CLI、媒体、Telegram 均编译测试 |
+| `go test -count=1 ./...` | 通过 | 协议、core、HTTP、CLI、媒体、Telegram、管理操作均通过 |
 | `CGO_ENABLED=0 go build -trimpath ./cmd/muse-bridge` | 通过 | 发布约束保持纯 Go |
 | `go test -race ./...` | 本机未执行 | Windows 环境无 gcc；CI 设为 `CGO_ENABLED=1` |
 | `govulncheck ./...` | 首轮失败后修复 | Go 1.27.0 标准库漏洞报告促成升级到 1.27.4；v0.1.1 CI 重新验证 |
