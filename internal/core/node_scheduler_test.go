@@ -42,6 +42,10 @@ func TestCronMatcherAndSchedulerCallback(t *testing.T) {
 	if !cronMatches("0 9 * * 5", matched) || cronMatches("1 9 * * 5", matched) {
 		t.Fatal("cron matcher returned unexpected result")
 	}
+	// When both DOM and DOW are restricted, standard cron uses OR semantics.
+	if !cronMatches("0 9 2 * 5", matched) {
+		t.Fatal("cron DOM/DOW OR semantics are missing")
+	}
 	if validCron("0 9 * * *") == false || validCron("every day") || validCron("0 9 0 * *") {
 		t.Fatal("cron validator accepted invalid expression")
 	}

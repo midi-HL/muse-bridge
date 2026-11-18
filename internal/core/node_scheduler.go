@@ -126,13 +126,36 @@ func cronMatches(expr string, t time.Time) bool {
 	vals := [...]int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), int(t.Weekday())}
 	min := [...]int{0, 0, 1, 1, 0}
 	max := [...]int{59, 23, 31, 12, 6}
-	for i, f := range fields {
-		ok, err := cronFieldMatches(f, vals[i], min[i], max[i])
+	for i := 0; i < 2; i++ {
+		ok, err := cronFieldMatches(fields[i], vals[i], min[i], max[i])
 		if err != nil || !ok {
 			return false
 		}
 	}
-	return true
+	monthOK, err := cronFieldMatches(fields[3], vals[3], min[3], max[3])
+	if err != nil || !monthOK {
+		return false
+	}
+	// Vixie cron treats day-of-month and day-of-week as OR when both
+	// fields are restricted. If either field is wildcard, the other is
+	// the effective constraint.
+	dom, domErr := cronFieldMatches(fields[2], vals[2], min[2], max[2])
+	dow, dowErr := cronFieldMatches(fields[4], vals[4], min[4], max[4])
+	if domErr != nil || dowErr != nil {
+		return false
+	}
+	domWildcard := fields[2] == "*"
+	dowWildcard := fields[4] == "*"
+	switch {
+	case domWildcard && dowWildcard:
+		return true
+	case domWildcard:
+		return dow
+	case dowWildcard:
+		return dom
+	default:
+		return dom || dow
+	}
 }
 
 func cronFieldMatches(field string, value, min, max int) (bool, error) {
