@@ -24,10 +24,28 @@ type telegramRuntime struct {
 	ch         *telegram.Channel
 	service    *core.Service
 	handler    telegram.Handler
+	token      string
 	secret     string
 	mode       string
 	webhookURL string
-	started    bool
+	whitelist  string
+}
+
+type telegramConfig struct {
+	token, mode, secret, webhookURL, whitelist string
+}
+
+func readTelegramConfig(values map[string]any) telegramConfig {
+	cfg := telegramConfig{}
+	cfg.token, _ = values["telegram.token"].(string)
+	cfg.mode, _ = values["telegram.mode"].(string)
+	cfg.secret, _ = values["telegram.webhook_secret"].(string)
+	cfg.webhookURL, _ = values["telegram.webhook_url"].(string)
+	cfg.whitelist, _ = values["telegram.whitelist"].(string)
+	return cfg
+}
+func (r *telegramRuntime) sameConfig(cfg telegramConfig) bool {
+	return r.token == cfg.token && r.mode == cfg.mode && r.secret == cfg.secret && r.webhookURL == cfg.webhookURL && r.whitelist == cfg.whitelist
 }
 
 func (h telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
@@ -79,10 +97,11 @@ func newTelegramRuntime(ctx context.Context, service *core.Service) *telegramRun
 func (r *telegramRuntime) apply(values map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	token, _ := values["telegram.token"].(string)
-	mode, _ := values["telegram.mode"].(string)
-	secret, _ := values["telegram.webhook_secret"].(string)
-	webhookURL, _ := values["telegram.webhook_url"].(string)
+	cfg := readTelegramConfig(values)
+	token, mode, secret, webhookURL := cfg.token, cfg.mode, cfg.secret, cfg.webhookURL
+	if r.ch != nil && r.sameConfig(cfg) {
+		return nil
+	}
 	if mode == "webhook" && strings.TrimSpace(webhookURL) == "" && strings.TrimSpace(token) != "" {
 		return errors.New("telegram: webhook mode requires telegram.webhook_url")
 	}
@@ -97,9 +116,11 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 		return err
 	}
 	r.ch = ch
+	r.token = token
 	r.secret = secret
 	r.mode = mode
 	r.webhookURL = webhookURL
+	r.whitelist = cfg.whitelist
 	if mode == "webhook" {
 		if err := r.registerWebhookLocked(); err != nil {
 			_ = r.stopLocked()
@@ -122,9 +143,11 @@ func (r *telegramRuntime) stopLocked() error {
 		r.cancel = nil
 	}
 	if r.ch == nil {
+		r.token = ""
 		r.secret = ""
 		r.mode = ""
 		r.webhookURL = ""
+		r.whitelist = ""
 		return nil
 	}
 	if r.mode == "webhook" {
@@ -137,9 +160,11 @@ func (r *telegramRuntime) stopLocked() error {
 	}
 	_ = r.ch.Close()
 	r.ch = nil
+	r.token = ""
 	r.secret = ""
 	r.mode = ""
 	r.webhookURL = ""
+	r.whitelist = ""
 	return nil
 }
 
