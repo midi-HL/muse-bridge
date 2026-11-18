@@ -21,10 +21,12 @@ import (
 )
 
 type testBackend struct {
-	calls    int
-	requests []core.ChatRequest
-	err      error
-	filePath string
+	calls        int
+	requests     []core.ChatRequest
+	err          error
+	filePath     string
+	filePlatform string
+	fileUserID   string
 }
 
 func (b *testBackend) State(context.Context) (map[string]any, error) {
@@ -44,8 +46,10 @@ func (b *testBackend) Chat(_ context.Context, r core.ChatRequest, emit func(core
 	}
 	return core.ChatResult{SessionID: r.SessionID, Text: "hello"}, nil
 }
-func (b *testBackend) File(context.Context, string) (string, core.File, error) {
-	return b.filePath, core.File{Filename: "page.html", MIME: "text/html"}, nil
+func (b *testBackend) OpenFile(_ context.Context, _ string, platform, userID string) (*os.File, core.File, error) {
+	b.filePlatform, b.fileUserID = platform, userID
+	f, err := os.Open(b.filePath)
+	return f, core.File{Filename: "page.html", MIME: "text/html"}, err
 }
 
 type harness struct {
@@ -214,6 +218,28 @@ func TestOpenAIStreamingAndNonStreaming(t *testing.T) {
 		t.Fatal("session isolation failed")
 	}
 }
+func TestFileHandlerPassesAuthenticatedKeyIdentity(t *testing.T) {
+	h := newHarness(t)
+	h.backend.filePath = filepath.Join(t.TempDir(), "payload")
+	if err := os.WriteFile(h.backend.filePath, []byte("ok"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	key, err := h.s.keys.Authenticate(context.Background(), h.key, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, route := range []string{"/files/syntheticID", "/admin/api/files/syntheticID"} {
+		w := h.call("GET", route, "", "", false, h.key)
+		if w.Code != 200 || h.backend.filePlatform != "api" || h.backend.fileUserID != key.ID {
+			t.Fatal("file handler did not pass API ownership")
+		}
+		w = h.call("GET", route, "", "", true, "")
+		if w.Code != 200 || h.backend.filePlatform != "" || h.backend.fileUserID != "" {
+			t.Fatal("administrator file access changed")
+		}
+	}
+}
+
 func TestFileRequiresAuthAndForcesDownload(t *testing.T) {
 	h := newHarness(t)
 	h.backend.filePath = filepath.Join(t.TempDir(), "test")

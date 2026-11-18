@@ -55,7 +55,7 @@ CLI 服务地址默认是 `http://127.0.0.1:8787`；远程明文 HTTP 被拒绝�
 - `GET /admin/api/auth/status`、`POST /admin/api/auth/setup|login|logout`：HttpOnly、SameSite=Strict 会话 Cookie；写请求需要同源 `Origin` 与 `X-CSRF-Token`。登录失败按来源限速。
 - `GET /schema`、`GET /state`、`POST /action`：统一 action registry，操作未知或未支持时返回 `501 unsupported`，危险操作由前端确认。
 - `POST /chat`、`POST /admin/api/chat/stop`：管理会话 Web 聊天和 SSE。
-- `GET /files/{id}`：管理会话或有效外部 key 认证；文件名强制附件下载并限制路径。
+- `GET /files/{id}`、`GET /admin/api/files/{id}`：管理员可读取生成物；外部 API key 只能读取该 key 生成的文件。缺少归属信息的旧文件仅管理员可读。文件通过生成物目录的受限句柄打开，拒绝越界路径与链接，响应强制附件下载。
 - `GET /v1/models`、`POST /v1/chat/completions`：Bearer API key；支持 `muse-spark`、`muse-image`、`muse-video`、`gpt-4o-mini`，流式返回 OpenAI SSE，非流式返回 `chat.completion`。
 - `POST /api/chat`、`POST /api/chat/stream`：简单同步/SSE 别名；API session 按 key 隔离。
 

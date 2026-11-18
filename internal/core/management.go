@@ -460,11 +460,39 @@ func (s *Service) importBackup(ctx context.Context, args map[string]any) (any, e
 	}
 
 	seen := make(map[string]bool, len(env.Records))
-	for _, row := range env.Records {
+	for index, row := range env.Records {
 		// Store.Export already excludes auth/admin_session/api_key. Keep the
 		// allowlist here too so a hand-crafted backup cannot reintroduce them.
 		if !backupKinds[row.Kind] || !managedID.MatchString(row.ID) || len(row.Data) == 0 || !json.Valid(row.Data) {
 			return nil, errors.New("backup contains an invalid or forbidden record")
+		}
+		if row.Kind == "file" {
+			var rec fileRecord
+			if json.Unmarshal(row.Data, &rec) != nil || !validFileID(row.ID) || (rec.ID != "" && rec.ID != row.ID) {
+				return nil, errors.New("backup contains an unsafe file record")
+			}
+			name, err := s.importedFileName(rec, row.ID)
+			if err != nil {
+				return nil, errors.New("backup contains an unsafe file record")
+			}
+			rec.ID, rec.Path = row.ID, name
+			// Persist only the target-root-relative name, not the original host path.
+			normalized, err := json.Marshal(rec)
+			if err != nil {
+				return nil, errors.New("backup contains an unsafe file record")
+			}
+			env.Records[index].Data = normalized
+			// A metadata-only backup need not include bytes. Missing files stay
+			// unavailable, but an existing symlink or special file must be rejected.
+			if _, err = s.fileRoot.Lstat(name); err == nil {
+				file, openErr := s.openRecordFile(rec)
+				if openErr != nil {
+					return nil, errors.New("backup contains an unsafe file record")
+				}
+				_ = file.Close()
+			} else if !os.IsNotExist(err) {
+				return nil, errors.New("backup contains an unsafe file record")
+			}
 		}
 		key := row.Kind + ":" + row.ID
 		if seen[key] {
@@ -562,29 +590,24 @@ func (s *Service) downloadASR(ctx context.Context, args map[string]any) (any, er
 	if err != nil {
 		return nil, err
 	}
-	data, err := media.SafeDownload(ctx, raw, 128<<20)
+	expected, err := textArg(args, "sha256", false, 64)
 	if err != nil {
 		return nil, err
 	}
-	name, _ := args["filename"].(string)
+	if expected != "" && !sha256Hex.MatchString(expected) {
+		return nil, errors.New("sha256 must contain 64 hexadecimal digits")
+	}
+	name, err := textArg(args, "filename", false, 1024)
+	if err != nil {
+		return nil, err
+	}
 	if name == "" {
 		u, _ := url.Parse(raw)
 		name = filepath.Base(u.Path)
 	}
-	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
-	if name == "." || name == "" || name == string(filepath.Separator) {
-		name = "model.bin"
-	}
-	if strings.ContainsAny(name, "\x00\r\n") {
-		return nil, errors.New("filename is invalid")
-	}
-	dir := filepath.Join(s.dataDir, "models")
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	data, err := media.SafeDownload(ctx, raw, 128<<20)
+	if err != nil {
 		return nil, err
 	}
-	path := filepath.Join(dir, secure.ID()+"-"+name)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return nil, err
-	}
-	return map[string]any{"filename": name, "path": path, "size": len(data), "sha256": media.SHA256(data)}, nil
+	return s.storeDownloadedModel(name, data, expected)
 }

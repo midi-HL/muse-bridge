@@ -29,7 +29,7 @@ type Backend interface {
 	State(context.Context) (map[string]any, error)
 	Action(context.Context, string, map[string]any) (any, error)
 	Chat(context.Context, core.ChatRequest, func(core.ChatEvent) error) (core.ChatResult, error)
-	File(context.Context, string) (string, core.File, error)
+	OpenFile(context.Context, string, string, string) (*os.File, core.File, error)
 }
 type Options struct {
 	Auth               *admin.Auth
@@ -410,10 +410,17 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		failure(w, 405, "method_not_allowed", "Method not allowed")
 		return
 	}
+	if s.auth == nil || s.backend == nil {
+		failure(w, 503, "unavailable", "Service is not ready")
+		return
+	}
+	platform, userID := "", ""
 	if _, ok := s.auth.Session(cookieRequest(r)); !ok {
-		if _, ok = s.apiKey(w, r, false); !ok {
+		key, authenticated := s.apiKey(w, r, false)
+		if !authenticated {
 			return
 		}
+		platform, userID = "api", key.ID
 	}
 	id := strings.TrimPrefix(r.URL.Path, "/files/")
 	if id == r.URL.Path {
@@ -423,13 +430,8 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		failure(w, 404, "not_found", "File not found")
 		return
 	}
-	path, meta, e := s.backend.File(r.Context(), id)
-	if e != nil {
-		failure(w, 404, "not_found", "File not found")
-		return
-	}
-	f, e := os.Open(path)
-	if e != nil {
+	f, meta, e := s.backend.OpenFile(r.Context(), id, platform, userID)
+	if e != nil || f == nil {
 		failure(w, 404, "not_found", "File not found")
 		return
 	}

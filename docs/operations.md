@@ -17,7 +17,7 @@
 | 设置、状态、日志 | `settings.update`、`/state` | core 持久化设置；secret 只返回 mask |
 | API key | `keys.create/list/update/revoke` | key 仅创建响应一次；认证限速按 key |
 | Web/OpenAI 聊天 | `/chat`、`/v1/chat/completions` | SSE、非流式和 stop 已接入 core |
-| 文件生成物 | `/files/{id}` | 需管理会话或外部 API key；强制下载 |
+| 文件生成物 | `/files/{id}`、`/admin/api/files/{id}` | 管理员可下载；API key 限于所属文件。旧的无归属记录仅管理员可读；生成物目录以 `os.Root` 限定，拒绝路径穿越与链接 |
 | 账号导入/探活 | `accounts.import/list/probe` | 依赖 pool/core；失败不得伪造成功 |
 | 节点、会话、定时任务、人设 | `nodes.*`、`sessions.*`、`schedules.*`、`personas.*` | 已接入 SQLite 持久化；节点 URL secret 加密，State 只返回掩码；节点测试通过固定 Muse session endpoint，计划任务按时区去重调度并写入日志/回调 |
 | 贴纸、ASR | `stickers.*`、`asr.*` | 贴纸描述 CRUD、Telegram `t.me/addstickers` 元数据导入、ASR 测试/模型安全下载已接入；视觉描述和未配置 ASR 模型明确返回 unsupported/配置错误 |
@@ -26,6 +26,10 @@
 | Telegram | `internal/channels/telegram`、`/telegram/webhook` | 已提供长轮询/webhook、白名单、命令分派、流式回调和运行时热更新；webhook 校验 `X-Telegram-Bot-Api-Secret-Token`，WebUI/CLI 保存 token、模式、secret 或白名单后立即重载，需部署机填写 Bot token 和公网 HTTPS webhook URL 才能进行外部验收 |
 
 协议可达性不能由静态 action 名称推断；每项真实能力必须用本地安全 cookie 在部署机验证。CI、日志、报告和仓库均不含用户凭证。
+
+生成物备份仅包含记录，不包含媒体字节。新文件使用生成物目录相对名称；迁移时须另行复制 `files/` 内容。旧版指向当前生成物目录的路径仍兼容；迁移到新目录时，符合旧 `files/<文件ID>-<文件名>` 布局的记录仅取文件名并重定位到当前生成物目录，绝不读取原机器路径。其他目录外路径、路径穿越、符号链接和非法记录会在任何备份写入前被拒绝。
+
+`asr.download` 可提交可选的 64 位十六进制 `sha256`，不匹配时不写文件；响应的 `path` 为相对数据目录的模型位置，不含宿主机绝对路径。下载限制按实际解码后字节数执行（上限 128 MiB），DNS、连接和读响应共用最多 60 秒期限；禁止自动代理和重定向，私网目标会被拒绝。
 
 ## 验证记录模板
 

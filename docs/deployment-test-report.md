@@ -3,8 +3,8 @@
 ## 版本与环境
 
 - 仓库：`midi-HL/muse-bridge`
-- 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.25` 已由 GitHub Actions 成功生成，七个平台构建和 SHA-256 校验均通过；包含协议池探活 action、明确能力状态和 secret 清除回归测试。此前 `v0.1.0` 至 `v0.1.24` Release 已成功生成。
+- 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
+- 本轮文件安全补丁：本地测试已通过，独立审查和 GitHub CI/Release 待确认。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
@@ -20,6 +20,14 @@
 | `govulncheck ./...` | 首轮失败后修复 | Go 1.27.0 标准库漏洞报告促成升级到 1.27.4；v0.1.1 CI 重新验证 |
 
 协议包的离线测试覆盖：Noise XX 双端握手、加密帧、乱序分片、重复分片拒绝、订阅事件、取消、上传大小校验、下载 EOF/长度校验。
+
+## 本轮文件安全验证
+
+- 初始回归为红：目录内符号链接可逃出文件根目录；安全补丁草稿拒绝自身导出的合法绝对路径备份；相对越界记录仍可导入且会改动已有记录。
+- 修复后：`go test ./internal/core ./internal/httpapi ./internal/media -count=1 -timeout=90s` 通过。覆盖生成物目录限定、跨 key 文件隔离、普通文件/链接判断、备份预验证、合法旧路径与相对路径迁移、数据库失败时清理孤儿文件、ASR SHA-256 和不返回绝对路径。
+- 下载用例先复现无/虚报 Content-Length 超限、读取错误返回部分内容、URL 错误泄密、DNS 未受总期限约束与环境代理继承；修复后对应测试通过。测试使用 fake resolver/transport、net.Pipe 和本地临时文件，不访问用户 Cookie 或真实上游。
+- `go vet ./...`、`go test -count=1 -timeout=90s ./...`、`CGO_ENABLED=0 go build -trimpath`、Node 前端 4 项测试通过。Windows 本机没有 gcc，race 结果需以本轮 GitHub CI 的实际结果为准。
+- 当前完整应用仍存在前文列出的未实测外部链路；本轮修复不等价于所有需求都已验收。
 
 ## 本地 HTTP 冒烟
 

@@ -180,54 +180,125 @@ func safeName(s string) string {
 		return r
 	}, s)
 }
+
+type downloadResolver func(context.Context, string, string) ([]net.IP, error)
+
+type downloadTransport interface {
+	http.RoundTripper
+	CloseIdleConnections()
+}
+
 func SafeDownload(ctx context.Context, raw string, maxBytes int64) ([]byte, error) {
+	return safeDownload(ctx, raw, maxBytes, net.DefaultResolver.LookupIP, newDownloadTransport)
+}
+
+func safeDownload(ctx context.Context, raw string, maxBytes int64, resolve downloadResolver, transport func([]net.IP) downloadTransport) ([]byte, error) {
+	// One deadline includes DNS, connection setup, headers and the response body.
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	u, e := url.Parse(raw)
-	if e != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+	if e != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil {
 		return nil, ErrUnsafeURL
 	}
 	if maxBytes <= 0 || maxBytes > 128<<20 {
 		maxBytes = 40 << 20
 	}
-	ips, e := net.LookupIP(u.Hostname())
+	ips, e := resolve(ctx, "ip", u.Hostname())
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if e != nil || len(ips) == 0 {
 		return nil, ErrUnsafeURL
 	}
 	for _, ip := range ips {
-		if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		if !downloadPublicIP(ip) {
 			return nil, ErrUnsafeURL
 		}
 	}
+	tr := transport(ips)
+	defer tr.CloseIdleConnections()
+	client := &http.Client{Transport: tr, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, e := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if e != nil {
+		return nil, ErrUnsafeURL
+	}
+	resp, e := client.Do(req)
+	if e != nil {
+		return nil, downloadError(ctx)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, errors.New("media: download failed")
+	}
+	if resp.ContentLength > maxBytes {
+		return nil, ErrTooLarge
+	}
+	data, e := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if int64(len(data)) > maxBytes {
+		return nil, ErrTooLarge
+	}
+	if e != nil || ctx.Err() != nil {
+		return nil, downloadError(ctx)
+	}
+	return data, nil
+}
+
+func downloadError(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Transport and body errors can include the request URL and its token.
+	return errors.New("media: download failed")
+}
+
+func downloadPublicIP(ip net.IP) bool {
+	if !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	if v4 := ip.To4(); v4 != nil {
+		// Shared address space (CGNAT) is not public; neither are 0/8 or 240/4.
+		return v4[0] != 0 && v4[0] < 240 && !(v4[0] == 100 && v4[1]&0xc0 == 64)
+	}
+	return true
+}
+
+func newDownloadTransport(ips []net.IP) downloadTransport {
 	dialer := &net.Dialer{Timeout: 15 * time.Second}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.DialContext = func(c context.Context, network, address string) (net.Conn, error) {
+	// Build a private transport: no environment proxy, inherited TLS override,
+	// alternate protocol handler or connection pool may bypass the pinned dialer.
+	return &http.Transport{
+		DialContext:           downloadDialContext(ips, dialer.DialContext),
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		DisableKeepAlives:     true,
+	}
+}
+
+func downloadDialContext(ips []net.IP, dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+	// Copy the validated values so subsequent resolver state cannot change them.
+	addresses := make([]string, len(ips))
+	for i, ip := range ips {
+		addresses[i] = ip.String()
+	}
+	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		_, port, err := net.SplitHostPort(address)
 		if err != nil {
-			return nil, err
+			return nil, errors.New("media: public address unavailable")
 		}
-		for _, ip := range ips {
-			conn, err := dialer.DialContext(c, network, net.JoinHostPort(ip.String(), port))
+		for _, ip := range addresses {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			conn, err := dial(ctx, network, net.JoinHostPort(ip, port))
 			if err == nil {
 				return conn, nil
 			}
 		}
 		return nil, errors.New("media: public address unavailable")
 	}
-	client := &http.Client{Transport: tr, Timeout: 60 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	req, e := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
-	if e != nil {
-		return nil, e
-	}
-	resp, e := client.Do(req)
-	if e != nil {
-		return nil, e
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("media: download HTTP %d", resp.StatusCode)
-	}
-	if resp.ContentLength > maxBytes {
-		return nil, ErrTooLarge
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
 }
+
 func SHA256(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }

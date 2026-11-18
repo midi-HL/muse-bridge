@@ -61,7 +61,7 @@ func Operations() []Operation {
 		{Name: "stickers.update", Title: "修改贴纸描述", TitleEN: "Update sticker description", Group: "stickers", Fields: []map[string]any{id, field("description", "描述", "textarea")}},
 		{Name: "stickers.delete", Title: "删除贴纸", TitleEN: "Delete sticker", Group: "stickers", Dangerous: true, Fields: []map[string]any{id}},
 		{Name: "asr.test", Title: "测试语音转写", TitleEN: "Test transcription", Group: "asr", Fields: []map[string]any{field("filename", "文件名", "string"), field("data_base64", "音频 base64", "textarea")}},
-		{Name: "asr.download", Title: "下载语音模型", TitleEN: "Download ASR model", Group: "asr", Fields: []map[string]any{field("url", "HTTPS 模型地址", "url")}},
+		{Name: "asr.download", Title: "下载语音模型", TitleEN: "Download ASR model", Group: "asr", Fields: []map[string]any{field("url", "HTTPS 模型地址", "url"), field("sha256", "SHA-256（可选 / optional）", "string"), field("filename", "文件名 / Filename", "string")}},
 	}
 	for i := range specs {
 		if specs[i].Fields == nil {

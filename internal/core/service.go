@@ -3,7 +3,6 @@ package core
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -29,6 +28,7 @@ type Service struct {
 	vault            *secure.Vault
 	redactor         *secure.Redactor
 	dataDir          string
+	fileRoot         *os.Root
 	settingsMu       sync.RWMutex
 	settings         map[string]any
 	settingsHook     func(map[string]any) error
@@ -49,7 +49,9 @@ type Service struct {
 
 type fileRecord struct {
 	File
-	Path string `json:"path"`
+	Path     string `json:"path"`
+	Platform string `json:"platform,omitempty"`
+	UserID   string `json:"user_id,omitempty"`
 }
 
 type sessionRecord struct {
@@ -136,7 +138,13 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		_ = p.Close()
 		return nil, err
 	}
-	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
+	fileRoot, err := os.OpenRoot(filepath.Join(dataDir, "files"))
+	if err != nil {
+		cancel()
+		_ = p.Close()
+		return nil, errors.New("cannot open generated file directory")
+	}
+	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, fileRoot: fileRoot, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
 	s.startScheduler()
 	return s, nil
 }
@@ -153,6 +161,7 @@ func (s *Service) Close() error {
 		s.schedulerWG.Wait()
 		s.executionWG.Wait()
 		_ = s.pool.Close()
+		_ = s.fileRoot.Close()
 	})
 	return nil
 }
@@ -507,7 +516,7 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 		generated, e := c.Generate(runCtx, hreq, func(ev hatch.Event) error {
 			ce := ChatEvent{Type: ev.Type, Text: ev.Text, NodeID: result.NodeID, SessionID: req.SessionID}
 			if ev.Attachment != nil {
-				f, err := s.materialize(runCtx, c, *ev.Attachment)
+				f, err := s.materialize(runCtx, c, *ev.Attachment, req.Platform, req.UserID)
 				if err != nil {
 					return err
 				}
@@ -547,16 +556,6 @@ func (s *Service) Stop(sessionID string) bool {
 	}
 	return ok
 }
-func (s *Service) File(ctx context.Context, id string) (string, File, error) {
-	var f fileRecord
-	if err := s.db.Get(ctx, "file", id, &f); err != nil {
-		return "", File{}, err
-	}
-	if f.Path == "" {
-		return "", File{}, sql.ErrNoRows
-	}
-	return f.Path, f.File, nil
-}
 func (s *Service) Log(ctx context.Context, level, message string) error {
 	if s.redactor != nil {
 		message = s.redactor.Text(message)
@@ -564,26 +563,12 @@ func (s *Service) Log(ctx context.Context, level, message string) error {
 	return s.db.Log(ctx, level, message)
 }
 
-func (s *Service) materialize(ctx context.Context, c *hatch.Client, a hatch.Attachment) (File, error) {
+func (s *Service) materialize(ctx context.Context, c *hatch.Client, a hatch.Attachment, platform, userID string) (File, error) {
 	data, err := c.Download(ctx, a)
 	if err != nil {
 		return File{}, err
 	}
-	id := secure.ID()
-	name := a.Filename
-	if name == "" {
-		name = "download.bin"
-	}
-	safe := filepath.Base(name)
-	path := filepath.Join(s.dataDir, "files", id+"-"+safe)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		return File{}, err
-	}
-	f := File{ID: id, Filename: safe, MIME: a.MIME}
-	if err := s.db.Put(ctx, "file", id, fileRecord{File: f, Path: path}, nil); err != nil {
-		return File{}, err
-	}
-	return f, nil
+	return s.storeGeneratedFile(ctx, a.Filename, a.MIME, data, platform, userID)
 }
 func (s *Service) acquire(ctx context.Context) error {
 	s.queueMu.Lock()
