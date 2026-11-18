@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/midi-HL/muse-bridge/internal/hatch"
 )
 
 // ScheduleExecution is the public, secret-free schedule payload delivered to callbacks.
@@ -29,6 +31,24 @@ type ScheduleExecution struct {
 
 // ScheduleCallback is invoked asynchronously when an enabled schedule is due.
 type ScheduleCallback func(ScheduleExecution, time.Time)
+
+// DeliverScheduledWeb appends a system-generated assistant message to a local
+// Web session. It never invokes Muse or claims an external delivery occurred.
+func (s *Service) DeliverScheduledWeb(ctx context.Context, job ScheduleExecution, when time.Time) error {
+	if job.Platform != "web" || strings.TrimSpace(job.Target) == "" {
+		return errors.New("scheduled Web target is invalid")
+	}
+	var item sessionRecord
+	if err := s.db.Get(ctx, "session", job.Target, &item); err != nil {
+		return errors.New("scheduled Web session not found")
+	}
+	if item.Platform != "" && item.Platform != "web" {
+		return errors.New("scheduled Web session belongs to another platform")
+	}
+	item.Messages = append(item.Messages, hatch.Message{Role: "assistant", Content: job.Prompt})
+	item.UpdatedAt = when.UTC().Format(time.RFC3339Nano)
+	return s.db.Put(ctx, "session", item.ID, item, nil)
+}
 
 func (s *Service) SetScheduleCallback(fn ScheduleCallback) {
 	s.scheduleMu.Lock()

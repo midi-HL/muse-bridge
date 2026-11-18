@@ -85,8 +85,14 @@ func serve(ctx context.Context, args []string) error {
 	telegramRuntime := newTelegramRuntime(ctx, service)
 	defer telegramRuntime.close()
 	service.SetSettingsHook(telegramRuntime.apply)
-	service.SetScheduleCallback(func(job core.ScheduleExecution, _ time.Time) {
-		if err := telegramRuntime.sendScheduled(ctx, job); err != nil {
+	service.SetScheduleCallback(func(job core.ScheduleExecution, when time.Time) {
+		var err error
+		if job.Platform == "web" {
+			err = service.DeliverScheduledWeb(context.Background(), job, when)
+		} else {
+			err = telegramRuntime.sendScheduled(ctx, job)
+		}
+		if err != nil {
 			_ = service.Log(context.Background(), "error", "scheduled delivery failed (schedule_id="+job.ID+"): "+err.Error())
 		}
 	})
