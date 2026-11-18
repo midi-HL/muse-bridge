@@ -359,7 +359,10 @@ func (ch *Channel) Run(ctx context.Context) error {
 			return ctx.Err()
 		default:
 		}
-		v, e := client.call(ctx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(client.offset, 10)}})
+		ch.mu.Lock()
+		offset := client.offset
+		ch.mu.Unlock()
+		v, e := client.call(ctx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(offset, 10)}})
 		if e != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -380,7 +383,12 @@ func (ch *Channel) Run(ctx context.Context) error {
 	}
 }
 func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
-	if len(ch.whitelist) > 0 && !ch.whitelist[u.Message.From.ID] {
+	ch.mu.Lock()
+	client := ch.client
+	handler := ch.handler
+	allowed := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID]
+	ch.mu.Unlock()
+	if !allowed || client == nil || handler == nil {
 		return nil
 	}
 	r := Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
@@ -388,29 +396,29 @@ func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
 		parts := strings.Fields(r.Text)
 		name := strings.TrimPrefix(parts[0], "/")
 		args := strings.TrimSpace(strings.TrimPrefix(r.Text, parts[0]))
-		resp, e := ch.handler.Command(ctx, r, Command{Name: name, Args: args})
+		resp, e := handler.Command(ctx, r, Command{Name: name, Args: args})
 		if e != nil {
 			return e
 		}
 		if resp.Text != "" {
-			_, e = ch.client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+			_, e = client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
 		}
 		return e
 	}
 	emitted := false
-	resp, e := ch.handler.Chat(ctx, r, func(text string) error {
+	resp, e := handler.Chat(ctx, r, func(text string) error {
 		if text == "" {
 			return nil
 		}
 		emitted = true
-		_, e := ch.client.Send(ctx, r.ChatID, MarkdownHTML(text), true)
+		_, e := client.Send(ctx, r.ChatID, MarkdownHTML(text), true)
 		return e
 	})
 	if e != nil {
 		return e
 	}
 	if !emitted && resp.Text != "" {
-		_, e = ch.client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+		_, e = client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
 	}
 	return e
 }
