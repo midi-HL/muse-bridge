@@ -161,6 +161,14 @@ func (s *Service) Settings() map[string]any {
 	defer s.settingsMu.RUnlock()
 	return publicSettings(s.settings)
 }
+
+// RuntimeSettings is for trusted in-process adapters only (Telegram/webhook,
+// media, schedulers). It must never be returned from an HTTP or CLI response.
+func (s *Service) RuntimeSettings() map[string]any {
+	s.settingsMu.RLock()
+	defer s.settingsMu.RUnlock()
+	return cloneAnyMap(s.settings)
+}
 func (s *Service) Schema() map[string]any {
 	return map[string]any{"settings": append([]config.Field(nil), config.Fields...), "operations": []string{
 		"state", "schema", "settings", "settings.update", "log",

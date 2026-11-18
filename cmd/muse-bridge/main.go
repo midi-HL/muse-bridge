@@ -99,7 +99,7 @@ func serve(ctx context.Context, args []string) error {
 		return errors.New("cannot listen on requested address")
 	}
 	defer listener.Close()
-	if e := telegramRuntime.apply(values); e != nil {
+	if e := telegramRuntime.apply(service.RuntimeSettings()); e != nil {
 		return errors.New("cannot initialize Telegram channel")
 	}
 	fmt.Fprintf(os.Stderr, "Muse Bridge %s listening on %s\n", version, listener.Addr())
