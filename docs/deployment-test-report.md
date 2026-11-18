@@ -100,7 +100,7 @@
 | 8 | 图片生成 | 协议模拟通过，真实外部未执行 |
 | 9 | `/new` `/stop` `/retry` `/status` `/help` | Web/core stop 和 Telegram基础命令已实现；外部未执行 |
 | 10 | `/tasks` 等协议能力 | 明确 unsupported/unknown，无参数证据 |
-| 11 | 群聊发言人归属 | 适配层字段与前缀边界已实现，外部未执行 |
+| 11 | 群聊触发与发言人归属 | 模拟轮询与 Webhook 验证了 @ 当前 Bot 和回复当前 Bot 的触发条件。两位发言人的标识进入模型输入与成功历史，`/retry` 保留原标识。真实群聊待验收 |
 | 12 | OpenAI models/chat completions | HTTP 合同和安全测试通过，真实上游未执行 |
 | 13 | 失效 Cookie 状态与告警 | 状态映射已实现，真实失效账号未执行 |
 | 14 | 重启持久化 | SQLite/settings/session 单元测试通过 |

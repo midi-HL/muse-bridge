@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/core"
@@ -70,13 +71,42 @@ func (h *telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, e
 		return telegram.Response{}, err
 	}
 	owner := strconv.FormatInt(r.ChatID, 10)
-	result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: owner, Prompt: r.Text, RetryUserID: strconv.FormatInt(r.UserID, 10)}, func(ev core.ChatEvent) error {
+	result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: owner, Prompt: telegramPrompt(r), RetryUserID: strconv.FormatInt(r.UserID, 10)}, func(ev core.ChatEvent) error {
 		if ev.Type == "text" && ev.Text != "" && emit != nil {
 			return emit(ev.Text)
 		}
 		return nil
 	})
 	return telegram.Response{Text: result.Text}, err
+}
+
+func telegramPrompt(r telegram.Request) string {
+	if r.ChatType != "group" && r.ChatType != "supergroup" {
+		return r.Text
+	}
+	name := strings.Join(strings.FieldsFunc(r.Name, func(c rune) bool {
+		return unicode.IsSpace(c) || unicode.IsControl(c) || unicode.Is(unicode.Cf, c) || strings.ContainsRune("[]()@", c)
+	}), " ")
+	username := strings.TrimPrefix(r.Username, "@")
+	if strings.IndexFunc(username, func(c rune) bool {
+		return !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_')
+	}) >= 0 {
+		username = ""
+	}
+	if name == "" {
+		switch {
+		case username != "":
+			name = username
+		case r.UserID != 0:
+			name = "用户 " + strconv.FormatInt(r.UserID, 10)
+		default:
+			name = "未知发言人"
+		}
+	}
+	if username != "" {
+		name += " (@" + username + ")"
+	}
+	return "[" + name + "]: " + r.Text
 }
 
 func (h *telegramServiceHandler) DeliverCommand(ctx context.Context, r telegram.Request, cmd telegram.Command, send func() error) (bool, error) {

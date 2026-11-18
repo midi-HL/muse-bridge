@@ -112,6 +112,7 @@ func (c Callbacks) Feedback(ctx context.Context, r Request, d Delivery) error {
 type Client struct {
 	token, base string
 	http        *http.Client
+	identity    botIdentityCache
 }
 
 func NewClient(token string, h *http.Client) (*Client, error) {
@@ -326,7 +327,11 @@ type update struct {
 			ID   int64  `json:"id"`
 			Type string `json:"type"`
 		} `json:"chat"`
-		Text string `json:"text"`
+		Text     string          `json:"text"`
+		Entities []messageEntity `json:"entities"`
+		Reply    *struct {
+			From botIdentity `json:"from"`
+		} `json:"reply_to_message"`
 	} `json:"message"`
 }
 type Channel struct {
@@ -502,7 +507,7 @@ func (ch *Channel) Run(ctx context.Context) error {
 				continue
 			}
 			dispatched = true
-			if ch.acceptsUpdate(u) {
+			if ch.acceptsUpdate(runCtx, u) {
 				command, isCommand := parseTelegramCommand(u.Message.Text)
 				req, bindErr := ch.bindUpdate(runCtx, u)
 				switch {
@@ -581,20 +586,27 @@ func (ch *Channel) requestFromUpdate(u update) Request {
 	return Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
 }
 
-// acceptsUpdate is a pure preflight: rejecting an update must not create a
-// persistent Telegram chat pointer or any other session state.
-func (ch *Channel) acceptsUpdate(u update) bool {
+// acceptsUpdate filters incoming messages before they can create session state.
+func (ch *Channel) acceptsUpdate(ctx context.Context, u update) bool {
 	if u.Message.Chat.ID == 0 || strings.TrimSpace(u.Message.Text) == "" {
 		return false
 	}
 	ch.mu.Lock()
-	allowed, botUsername := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID], ch.botUsername
+	allowed := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID]
+	botUsername, client := ch.botUsername, ch.client
 	ch.mu.Unlock()
 	if !allowed {
 		return false
 	}
-	command, ok := parseTelegramCommand(u.Message.Text)
-	return !ok || command.Target == "" || (botUsername != "" && strings.EqualFold(command.Target, botUsername))
+	if command, ok := parseTelegramCommand(u.Message.Text); ok {
+		return command.Target == "" || strings.EqualFold(command.Target, botUsername)
+	}
+	switch u.Message.Chat.Type {
+	case "group", "supergroup":
+		return groupTriggered(ctx, u, client)
+	default:
+		return true
+	}
 }
 
 func (ch *Channel) bindUpdate(ctx context.Context, u update) (Request, error) {
@@ -608,7 +620,7 @@ func (ch *Channel) bindUpdate(ctx context.Context, u update) (Request, error) {
 	return r, nil
 }
 func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
-	if !ch.acceptsUpdate(u) {
+	if !ch.acceptsUpdate(ctx, u) {
 		return nil
 	}
 	r, err := ch.bindUpdate(ctx, u)
@@ -682,7 +694,7 @@ func (ch *Channel) WebhookHandler() http.Handler {
 			http.Error(w, "bad update", 400)
 			return
 		}
-		if !ch.acceptsUpdate(u) {
+		if !ch.acceptsUpdate(r.Context(), u) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
