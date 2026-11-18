@@ -41,6 +41,22 @@ func TestManagementActionsPersistAndMask(t *testing.T) {
 	}
 }
 
+func TestStickerImportRequiresConfiguredTokenAndValidURL(t *testing.T) {
+	s, _ := testService(t)
+	ctx := context.Background()
+	_, err := s.Action(ctx, "stickers.import", map[string]any{"url": "https://t.me/addstickers/demo"})
+	if !errors.Is(err, telegram.ErrNotConfigured) {
+		t.Fatalf("expected ErrNotConfigured, got %v", err)
+	}
+	if _, err := s.Action(ctx, "settings.update", map[string]any{"values": map[string]any{"telegram.token": "123:secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Action(ctx, "stickers.import", map[string]any{"url": "https://evil.example/addstickers/demo"})
+	if err == nil || !strings.Contains(err.Error(), "sticker set URL is invalid") {
+		t.Fatalf("expected URL validation error, got %v", err)
+	}
+}
+
 func TestBackupImportOverwritesExistingRecords(t *testing.T) {
 	s, _ := testService(t)
 	ctx := context.Background()
