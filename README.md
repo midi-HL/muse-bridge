@@ -43,6 +43,7 @@ muse-bridge keys create --name NAME --out PRIVATE_FILE
 muse-bridge keys revoke ID
 muse-bridge backup export|import --file FILE --passphrase-env MUSE_BACKUP_PASSPHRASE
 muse-bridge protocol probe
+muse-bridge action NAME --args JSON | --args-file PRIVATE_FILE
 ```
 
 CLI 服务地址默认是 `http://127.0.0.1:8787`；远程明文 HTTP 被拒绝，只允许 HTTPS。管理会话只从 `MUSE_ADMIN_COOKIE`、`MUSE_CSRF_TOKEN` 或 `MUSE_AUTH_FILE` 取得，外部 API 只从 `MUSE_API_KEY` 取得。`--cookie` 严格只接受 `env:NAME` 或 `file:PATH`，不接受 raw cookie；文件必须是私有文件。`keys create` 只把一次性 key 写入一个此前不存在的 0600 文件，终端只显示 ID 和保存结果。

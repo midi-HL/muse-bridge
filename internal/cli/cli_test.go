@@ -123,6 +123,40 @@ func TestCLIChatStream(t *testing.T) {
 		t.Fatal("duplicated SSE final text")
 	}
 }
+func TestGenericActionUsesSharedRegistry(t *testing.T) {
+	var called string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/admin/api/auth/status" {
+			io.WriteString(w, `{"authenticated":true,"csrf_token":"csrf"}`)
+			return
+		}
+		var body struct {
+			Action string         `json:"action"`
+			Args   map[string]any `json:"args"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		called = body.Action
+		if body.Args["name"] != "demo" {
+			t.Errorf("args were not sent: %#v", body.Args)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"ok": true, "data": map[string]any{"ok": true}})
+	}))
+	defer ts.Close()
+	out := &bytes.Buffer{}
+	r := Runner{Out: out, Env: func(k string) string {
+		if k == "MUSE_ADMIN_COOKIE" {
+			return "session"
+		}
+		return ""
+	}}
+	if err := r.Run(context.Background(), []string{"--url", ts.URL, "action", "personas.save", "--args", `{"name":"demo","prompt":"hi"}`}); err != nil {
+		t.Fatal(err)
+	}
+	if called != "personas.save" {
+		t.Fatalf("wrong action: %s", called)
+	}
+}
+
 func TestCredentialResponseErrorsNeverEchoBodies(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)

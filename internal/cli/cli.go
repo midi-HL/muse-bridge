@@ -135,10 +135,45 @@ func (r Runner) Run(ctx context.Context, args []string) error {
 			return e
 		}
 		return r.print(v)
+	case "action":
+		return r.action(ctx, &c, args[1:])
 	default:
 		return errors.New("unknown command; see muse-bridge help")
 	}
 }
+func (r Runner) action(ctx context.Context, c *client, args []string) error {
+	if len(args) == 0 {
+		return errors.New("usage: action NAME [--args JSON | --args-file PATH]")
+	}
+	name := args[0]
+	var raw, file string
+	f, err := parse("action", args[1:], func(f *flag.FlagSet) { f.StringVar(&raw, "args", "{}", ""); f.StringVar(&file, "args-file", "", "") })
+	if err != nil {
+		return err
+	}
+	if f.NArg() != 0 || (raw != "{}" && file != "") {
+		return errors.New("use one of --args JSON or --args-file PATH")
+	}
+	if file != "" {
+		b, e := privateRead(file, 8<<20)
+		if e != nil {
+			return e
+		}
+		raw = string(b)
+	}
+	argsMap := map[string]any{}
+	if strings.TrimSpace(raw) != "" {
+		if e := json.Unmarshal([]byte(raw), &argsMap); e != nil {
+			return errors.New("--args must be a JSON object")
+		}
+	}
+	v, e := c.action(ctx, name, argsMap)
+	if e != nil {
+		return e
+	}
+	return r.print(v)
+}
+
 func envDefault(env func(string) string, key, fallback string) string {
 	if v := env(key); v != "" {
 		return v
@@ -648,6 +683,7 @@ const usage = `Muse Bridge
   muse-bridge [global options] keys revoke ID
   muse-bridge [global options] backup export|import --file FILE [--passphrase-env NAME]
   muse-bridge [global options] protocol probe
+  muse-bridge [global options] action NAME [--args JSON | --args-file PATH]
 
 Credentials: MUSE_ADMIN_COOKIE, MUSE_CSRF_TOKEN, MUSE_API_KEY, MUSE_AUTH_FILE.
 Secrets never belong in command-line arguments. Global options precede the command.
