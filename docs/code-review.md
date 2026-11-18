@@ -49,7 +49,7 @@
 - WebUI 实际组件测试覆盖人设选择、失败重试、定时刷新、异步切会话和生成期间禁用；CLI、OpenAI、简单 API、Web 与 Telegram 命令入口有行为测试。没有据此宣称浏览器视觉或真实 Muse 服从预设通过。
 - 独立审查发现重复导入同 ID 会清空绑定/分池/备注并启用停用账号。新增失败测试后修为原子 Cookie 刷新，只有显式字段才改动；HTTP 与 core 测试均通过。
 - 第二轮审查发现只改备注也会关闭正在使用的 client。真实延迟代理请求先复现 note/node/cookie 三种更新导致取消，再修为连接重建延后到当前请求完成；旧请求不能覆盖新凭证。两项 P2 经独立只读复审均关闭（verdict: pass）。
-- 本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 HTTP 启动冒烟已通过；本轮 CI/race/govulncheck/Release 结果以部署报告的具体提交和运行记录为准。
+- 本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 HTTP 启动冒烟已通过；CI [44265763306](https://github.com/midi-HL/muse-bridge/actions/runs/44265763306)（同源码提交）中 format/web/vet/unit/race/govulncheck/build 全过，Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 七平台全过。
 
 ## 残余风险和诚实限制
 

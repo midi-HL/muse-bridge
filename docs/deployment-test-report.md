@@ -8,12 +8,14 @@
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
-## v0.1.27 运行时配置修复（待发布）
+## v0.1.27 运行时配置修复（已发布）
 
 - 已补齐账号节点绑定、分池、备注与默认/显式人设，新增会话人设选择持久化，WebUI、CLI、API 与 Telegram 命令接入相同服务。
 - 失败基线覆盖：默认人设缺失、ID 代替提示词、非法人设进入生成并污染历史、重复导入重置账号配置、修改备注导致活跃连接取消。修复后对应回归通过。
-- 本地完整 Go 测试、vet、纯 Go 构建、HTTP 启动冒烟及 Node 12 项测试通过；前端测试已加入 CI。独立复审确认重复导入与活跃连接两项 P2 均关闭。
-- 测试使用合成凭证、本地代理与可控生成接口，验证真实调用参数和副作用，不代表真实 Muse/Telegram E2E 成功；本轮 CI 与七平台 Release 待推送后验证。
+- 本地 `go vet ./...`、`go test -count=1 -timeout=90s ./...`、`CGO_ENABLED=0 go build -trimpath`、HTTP 启动冒烟和 Node 前端 12 项测试通过。CI [44265763306](https://github.com/midi-HL/muse-bridge/actions/runs/44265763306) 对应同一源码提交 `0e172a9251dd932028639aa0b1617c1cb6ba7bb3`，格式、前端测试、vet、unit、race、govulncheck、build 全部通过。
+- Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 成功；Windows amd64/386/arm64 和 Linux amd64/386/arm64/arm GOARM7 全部通过构建和发布。
+- 下载 Windows amd64 正式产物，sidecar 和 `SHA256SUMS` 均校验通过，SHA-256 `f3d74612d533c508260e32550180ce94024c4a4d626cb0e8283b8f08fc0a2c1b`。以该正式产物实际启动隔离服务，设密、Schema、State 脱敏、API key、缺失文件 404 和嵌入 UI HTTP 通过。
+- 测试使用合成凭证、本地代理与可控生成接口，验证真实调用参数和副作用，不代表真实 Muse/Telegram E2E 成功；本机无 gcc，race 以同提交 Ubuntu CI 为准。
 - 剩余已知功能缺口：节点自动选优/故障切换、周期探活/冷却策略、部分运行时限流设置、Telegram `/new` 会话指针与 `/retry`、真实多媒体/贴纸出站、视觉视频处理、通过 Muse 生成的定时内容、告警和完整浏览器视觉验收仍需继续完成。不能把本补丁当作原任务书全部验收通过。
 
 ## 本地自动化结果
