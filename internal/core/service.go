@@ -236,6 +236,7 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 			return nil, err
 		}
 		s.settingsMu.Lock()
+		previous := cloneAnyMap(s.settings)
 		for k, v := range vals {
 			s.settings[k] = v
 		}
@@ -243,6 +244,9 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		hook := s.settingsHook
 		s.settingsMu.Unlock()
 		if err := persistSettings(ctx, s.db, out); err != nil {
+			s.settingsMu.Lock()
+			s.settings = previous
+			s.settingsMu.Unlock()
 			return nil, err
 		}
 		if hook != nil {
@@ -250,6 +254,13 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 			// not API output. They need the raw values to apply secret settings;
 			// callers still receive only the masked map below.
 			if err := hook(out); err != nil {
+				s.settingsMu.Lock()
+				s.settings = previous
+				s.settingsMu.Unlock()
+				_ = persistSettings(ctx, s.db, previous)
+				// Best effort to restore any external runtime adapter that may
+				// have partially applied the rejected settings.
+				_ = hook(previous)
 				return nil, err
 			}
 		}
