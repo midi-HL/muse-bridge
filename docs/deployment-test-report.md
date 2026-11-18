@@ -2,13 +2,20 @@
 
 ## 版本与环境
 
-- 最新稳定版为 [v0.1.31](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.31)，包含 Telegram 轮询和回执修复，以及旧文件 ID 兼容修复。
+- 最新稳定版 v0.1.32 支持 Telegram 群聊按提及或回复触发，并记录发言人。[发布页](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.32)
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
 - 本轮文件安全补丁：`v0.1.26`，源码提交 `d6cd64e44d55ad13a845a202a7998c828658bd6f`。CI [44242271552](https://github.com/midi-HL/muse-bridge/actions/runs/44242271552) 的格式、vet、单元测试、race、漏洞检查、构建全部通过；Release [44242561924](https://github.com/midi-HL/muse-bridge/actions/runs/44242561924) 七平台及发布通过。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
+
+## v0.1.32 Telegram 群聊
+
+- 轮询和 Webhook 通过 Telegram 的提及实体或回复对象识别发给当前 Bot 的群聊普通文本。群聊命令继续可用，私聊文本可以直接发送。忽略的消息不会创建会话。模型输入和成功历史保存发言人标识，`/retry` 复用原输入及标识。
+- 模拟 Bot API 的测试覆盖忽略普通群消息与其他 Bot 的回复、UTF-16 提及坐标、身份查询失败、两位发言人的历史及失败后重试。定向用例重复 10 次通过，Windows 386 定向回归通过。真实 Telegram 群聊与 Muse 回复仍待验收。
+- 源码 `583912eb76b0822426faf6d4d00fdaeef38bf8e3` 通过两轮独立审查。同一提交的 CI 通过格式检查、前端测试、Go 单测、`vet`、竞态检测、漏洞扫描和构建。Windows 与 Linux 共七个平台构建发布成功。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44420770764) · [发布工作流](https://github.com/midi-HL/muse-bridge/actions/runs/44421149567)
+- 正式 Windows amd64 产物的 SHA-256 为 `811d5f654188063140616d06fb31b623481ec963aa87496b87a4c2589a2b23e1`，与单文件校验值和 `SHA256SUMS` 一致。隔离启动、首次设密、管理 Schema、密钥脱敏、API key 认证、缺失文件返回 404 和嵌入式 WebUI 的 HTTP 响应均通过。[下载 Windows amd64](https://github.com/midi-HL/muse-bridge/releases/download/v0.1.32/muse-bridge-windows-amd64.exe)
 
 ## v0.1.30 跨架构备份 ID 修复（已发布）
 

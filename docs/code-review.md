@@ -65,6 +65,12 @@
 - 本轮本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 diff 检查通过。独立最终 reviewer 会话多次异常终止，故不记录为独立最终 review pass；此前各 finding 按实际复现测试修复并在指定范围复验。
 - v0.1.27 本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 HTTP 启动冒烟已通过；CI [44265763306](https://github.com/midi-HL/muse-bridge/actions/runs/44265763306)（同源码提交）中 format/web/vet/unit/race/govulncheck/build 全过，Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 七平台全过。
 
+## v0.1.32 Telegram 群聊触发与发言人
+
+- 变更前的模拟测试复现了普通群聊文本进入会话、回复其他 Bot 仍触发生成的问题。变更后，轮询和 Webhook 都在会话绑定前检查白名单和群聊触发条件。提及按 Telegram 的 UTF-16 坐标识别，回复按 `getMe` 返回的 Bot 用户 ID 匹配。
+- 模拟 Webhook 和实际 core 集成测试覆盖发言人标识进入模型输入与成功历史、失败后 `/retry` 复用原发言人标识。两轮独立审查均通过，真实 Telegram 群聊与 Muse 回复待验收。
+- `go vet ./...`、全库 Go 单测、12 项前端测试、纯 Go 构建及 Windows 386 定向回归通过。同一源码提交 `583912eb76b0822426faf6d4d00fdaeef38bf8e3` 的 CI 竞态检测和漏洞扫描通过。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44420770764)
+
 ## 残余风险和诚实限制
 
 - 没有在 CI 或仓库使用真实 Muse Cookie，因此真实 Muse、Telegram Bot、ASR 云端和节点环境的 E2E 未被伪造为通过。
