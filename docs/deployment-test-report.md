@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.12` 将包含 Telegram webhook 路由、secret header 校验、运行时热更新回滚和回归测试；GitHub Actions 七平台构建与 SHA-256 校验由 Release workflow 负责。此前 `v0.1.0` 至 `v0.1.11` Release 已成功生成。
+- Release：`v0.1.12` 已由 GitHub Actions 成功生成，七个平台构建和 SHA-256 校验均通过；包含 Telegram webhook 路由、secret header 校验、运行时热更新回滚和回归测试。此前 `v0.1.0` 至 `v0.1.11` Release 已成功生成。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
