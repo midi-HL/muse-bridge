@@ -83,9 +83,6 @@ func serve(ctx context.Context, args []string) error {
 	}
 	defer service.Close()
 	telegramRuntime := newTelegramRuntime(ctx, service)
-	if e := telegramRuntime.apply(values); e != nil {
-		return errors.New("cannot initialize Telegram channel")
-	}
 	defer telegramRuntime.close()
 	service.SetSettingsHook(telegramRuntime.apply)
 	auth := admin.NewAuth(db, os.Getenv("MUSE_SETUP_TOKEN"))
@@ -102,6 +99,9 @@ func serve(ctx context.Context, args []string) error {
 		return errors.New("cannot listen on requested address")
 	}
 	defer listener.Close()
+	if e := telegramRuntime.apply(values); e != nil {
+		return errors.New("cannot initialize Telegram channel")
+	}
 	fmt.Fprintf(os.Stderr, "Muse Bridge %s listening on %s\n", version, listener.Addr())
 	stopped := make(chan error, 1)
 	go func() { stopped <- server.Serve(listener) }()
