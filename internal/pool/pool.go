@@ -79,9 +79,8 @@ func (p *Pool) Add(ctx context.Context, a Account, cookies map[string]string) er
 	if a.Status == "" {
 		a.Status = "available"
 	}
-	if !a.Enabled {
-		a.Enabled = true
-	}
+	// Enabled is an explicit state. Callers that create an active account must
+	// set it to true; persistence must never silently re-enable a disabled one.
 	a.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	cp := cloneMap(cookies)
 	if err := p.db.Put(ctx, "account", a.ID, accountRecord{Account: a}, cp); err != nil {
