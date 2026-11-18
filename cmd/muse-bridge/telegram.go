@@ -74,8 +74,11 @@ func (h telegramServiceHandler) Command(ctx context.Context, r telegram.Request,
 		}
 		sessions, _ := state["sessions"].([]map[string]any)
 		return telegram.Response{Text: fmt.Sprintf("账号：%v\n排队：%v\n会话：%v", state["account_count"], state["queue_depth"], len(sessions))}, nil
+	case "persona":
+		text, err := h.service.TelegramPersonas(ctx, session, strconv.FormatInt(r.UserID, 10), cmd.Args)
+		return telegram.Response{Text: text}, err
 	case "help":
-		return telegram.Response{Text: "/new 新会话\n/stop 停止生成\n/status 查看状态\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
+		return telegram.Response{Text: "/new 新会话\n/stop 停止生成\n/status 查看状态\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
 	case "tasks", "usage":
 		return telegram.Response{}, telegram.ErrUnsupported
 	default:

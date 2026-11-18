@@ -37,7 +37,7 @@ muse-bridge config schema|get [KEY]
 muse-bridge config set KEY --value JSON | --value-env ENV_NAME
 muse-bridge accounts import --file PRIVATE_FILE | --env ENV_NAME
 muse-bridge accounts list|probe [ID]
-muse-bridge chat --prompt TEXT --model muse-spark [--stream=true]
+muse-bridge chat --prompt TEXT --model muse-spark [--persona ID|_none] [--stream=true]
 muse-bridge chat --cookie env:NAME|file:PRIVATE_FILE --prompt TEXT
 muse-bridge keys create --name NAME --out PRIVATE_FILE
 muse-bridge keys revoke ID
@@ -60,6 +60,12 @@ CLI 服务地址默认是 `http://127.0.0.1:8787`；远程明文 HTTP 被拒绝�
 - `POST /api/chat`、`POST /api/chat/stream`：简单同步/SSE 别名；API session 按 key 隔离。
 
 错误只返回稳定的 code/message，不转发上游 body、URL、cookie 或 token。API key 与管理 console 会话永不互相替代。
+
+## 账号路由与人设
+
+账号支持 `node_id`、`pool`（`shared`/`chat`/`api`）与 `note`。开启 `pool.split` 后，Web/Telegram 使用 chat 或 shared 账号，外部 API/CLI 聊天使用 api 或 shared 账号；关闭后共用所有可用账号。绑定节点失效会拒绝使用该账号，不会自动绕过绑定直连。节点或 Cookie 更新在当前请求结束后生效；更新显示名称或备注不会打断生成。重复导入同 ID Cookie 保留未明确提供的账号配置与启停状态。
+
+人设预设保存正文后，可在聊天页选择、CLI 使用 `--persona ID`，或 Telegram 使用 `/persona ID`。`_none` 表示关闭预设（Telegram 用 `/persona none`）；未指定时，新会话使用 `persona.default_id`，后续消息保留该会话的选择。OpenAI 兼容接口支持可选扩展字段 `persona_id`，管理 action 为 `sessions.persona`。人设只是引导，无法移除 Muse 自带系统提示词；本地自动化验证不代表真实 Muse 一定遵循人设。
 
 ## 能力限制
 

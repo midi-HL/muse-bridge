@@ -23,7 +23,7 @@ function navigate(page){if(!navItems().some(([key])=>key===page))page='overview'
 function renderShell(){title.textContent=titleFor(ctx.page);subtitle.textContent=t(`${ctx.page}Desc`);renderNavigation();renderContent();}
 function renderContent(){if(!content)return;content.replaceChildren(ctx.page==='chat'?chat.render():pages.render(ctx.page));}
 function refreshPagePeriodically(){ if(ctx.page==='logs'||ctx.page==='overview'||ctx.page==='sessions') refresh().catch(()=>{}); chat?.refreshHistory?.(); }
-function openChat(session){ctx.chatSessionId=session?.id || '';navigate('chat');}
+function openChat(session){chat?.chooseSession(session);}
 function makeShell(){
   root.replaceChildren();
   shell=el('div',{class:'app-shell'});

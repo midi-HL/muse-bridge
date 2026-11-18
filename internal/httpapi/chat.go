@@ -192,6 +192,7 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request) {
 		ToolChoice     json.RawMessage `json:"tool_choice"`
 		ResponseFormat json.RawMessage `json:"response_format"`
 		SessionID      string          `json:"session_id"`
+		PersonaID      string          `json:"persona_id"`
 	}
 	if !decode(w, r, &b, 2<<20) {
 		return
@@ -200,7 +201,7 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request) {
 		failure(w, 400, "unsupported", "Tools, structured output and multiple choices are unsupported")
 		return
 	}
-	req := core.ChatRequest{Model: b.Model, Messages: b.Messages, Platform: "api", UserID: key.ID, SessionID: apiSession(key.ID, b.SessionID)}
+	req := core.ChatRequest{Model: b.Model, Messages: b.Messages, PersonaID: b.PersonaID, Platform: "api", UserID: key.ID, SessionID: apiSession(key.ID, b.SessionID)}
 	if len(req.Messages) == 0 {
 		failure(w, 400, "invalid_request", "messages is required")
 		return

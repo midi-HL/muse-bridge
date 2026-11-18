@@ -38,6 +38,11 @@ func (s *Service) DeliverScheduledWeb(ctx context.Context, job ScheduleExecution
 	if job.Platform != "web" || strings.TrimSpace(job.Target) == "" {
 		return errors.New("scheduled Web target is invalid")
 	}
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if s.sessions[job.Target] != nil {
+		return errors.New("scheduled Web session is generating")
+	}
 	var item sessionRecord
 	if err := s.db.Get(ctx, "session", job.Target, &item); err != nil {
 		return errors.New("scheduled Web session not found")

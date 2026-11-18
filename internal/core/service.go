@@ -3,6 +3,7 @@ package core
 
 import (
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -33,6 +34,7 @@ type Service struct {
 	settings         map[string]any
 	settingsHook     func(map[string]any) error
 	pool             *pool.Pool
+	generate         func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
 	media            *media.Processor
 	gate             chan struct{}
 	queueMu          sync.Mutex
@@ -55,13 +57,15 @@ type fileRecord struct {
 }
 
 type sessionRecord struct {
-	ID        string          `json:"id"`
-	Platform  string          `json:"platform"`
-	UserID    string          `json:"user_id"`
-	Title     string          `json:"title"`
-	Messages  []hatch.Message `json:"messages"`
-	CreatedAt string          `json:"created_at"`
-	UpdatedAt string          `json:"updated_at"`
+	ID              string          `json:"id"`
+	Platform        string          `json:"platform"`
+	UserID          string          `json:"user_id"`
+	Title           string          `json:"title"`
+	Messages        []hatch.Message `json:"messages"`
+	CreatedAt       string          `json:"created_at"`
+	UpdatedAt       string          `json:"updated_at"`
+	PersonaID       string          `json:"persona_id"`
+	PersonaSelected bool            `json:"persona_selected"`
 }
 
 func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *secure.Redactor, dataDir string, overrides map[string]any) (*Service, error) {
@@ -145,6 +149,9 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		return nil, errors.New("cannot open generated file directory")
 	}
 	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, fileRoot: fileRoot, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
+	s.generate = func(ctx context.Context, client *hatch.Client, req hatch.GenerateRequest, emit func(hatch.Event) error) (hatch.GenerateResult, error) {
+		return client.Generate(ctx, req, emit)
+	}
 	s.startScheduler()
 	return s, nil
 }
@@ -189,7 +196,7 @@ func (s *Service) Schema() map[string]any {
 		"stickers.import", "stickers.update", "stickers.delete",
 		"backup.export", "backup.import",
 		"asr.test", "asr.download",
-		"sessions.history", "sessions.reset", "sessions.rename", "sessions.export", "chat.stop",
+		"sessions.history", "sessions.reset", "sessions.rename", "sessions.export", "sessions.persona", "chat.stop",
 	}}
 }
 func (s *Service) SetSettingsHook(fn func(map[string]any) error) {
@@ -210,7 +217,7 @@ func (s *Service) State(ctx context.Context) (map[string]any, error) {
 		var item sessionRecord
 		if json.Unmarshal(r.Data, &item) == nil {
 			item.Messages = nil
-			sessions = append(sessions, map[string]any{"id": item.ID, "platform": item.Platform, "user_id": item.UserID, "title": item.Title, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt})
+			sessions = append(sessions, map[string]any{"id": item.ID, "platform": item.Platform, "user_id": item.UserID, "title": item.Title, "created_at": item.CreatedAt, "updated_at": item.UpdatedAt, "persona_id": item.PersonaID, "persona_selected": item.PersonaSelected})
 		}
 	}
 	nodes, err := s.listNodes(ctx)
@@ -298,12 +305,10 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 				if id == "" {
 					id = secure.ID()
 				}
-				label := item.Label
-				if label == "" {
-					label = id[:8]
-				}
-				a := pool.Account{ID: id, Label: label, Enabled: true, Status: "unknown"}
-				if err := s.pool.Add(ctx, a, item.Cookies); err != nil {
+				fields := cloneAnyMap(item.Fields)
+				fields["id"] = id
+				a, err := s.pool.Import(ctx, id, fields, item.Cookies)
+				if err != nil {
 					return nil, err
 				}
 				added = append(added, a)
@@ -322,7 +327,12 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		if id == "" {
 			id = secure.ID()
 		}
-		label, _ := args["label"].(string)
+		fields := map[string]any{"id": id}
+		for _, key := range []string{"label", "node_id", "pool", "note", "enabled"} {
+			if value, exists := args[key]; exists {
+				fields[key] = value
+			}
+		}
 		cookies := map[string]string{}
 		if raw, ok := args["cookies"].(map[string]any); ok {
 			for k, v := range raw {
@@ -337,8 +347,8 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		if cookies["hatch_sess"] == "" {
 			return nil, errors.New("missing required hatch_sess cookie")
 		}
-		a := pool.Account{ID: id, Label: label, Enabled: true, Status: "unknown"}
-		if err := s.pool.Add(ctx, a, cookies); err != nil {
+		a, err := s.pool.Import(ctx, id, fields, cookies)
+		if err != nil {
 			return nil, err
 		}
 		if s.redactor != nil {
@@ -402,6 +412,13 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		return s.testASR(ctx, args)
 	case "asr.download":
 		return s.downloadASR(ctx, args)
+	case "sessions.persona":
+		id, _ := args["id"].(string)
+		personaID, ok := args["persona_id"].(string)
+		if !ok {
+			return nil, errors.New("persona_id is required")
+		}
+		return s.SetSessionPersona(ctx, id, "", "", personaID)
 	case "sessions.history":
 		id, _ := args["id"].(string)
 		var item sessionRecord
@@ -411,9 +428,19 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		return map[string]any{"session": item, "messages": item.Messages}, nil
 	case "sessions.reset":
 		id, _ := args["id"].(string)
+		s.sessionsMu.Lock()
+		defer s.sessionsMu.Unlock()
+		if s.sessions[id] != nil {
+			return nil, errors.New("session is generating")
+		}
 		return nil, s.db.Delete(ctx, "session", id)
 	case "sessions.rename":
 		id, _ := args["id"].(string)
+		s.sessionsMu.Lock()
+		defer s.sessionsMu.Unlock()
+		if s.sessions[id] != nil {
+			return nil, errors.New("session is generating")
+		}
 		var item sessionRecord
 		if err := s.db.Get(ctx, "session", id, &item); err != nil {
 			return nil, err
@@ -451,9 +478,13 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 		req.Model = "muse-spark"
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	stopLifecycle := context.AfterFunc(s.life, cancel)
+	defer stopLifecycle()
 	s.sessionsMu.Lock()
-	if old := s.sessions[req.SessionID]; old != nil {
-		old()
+	if s.sessions[req.SessionID] != nil {
+		s.sessionsMu.Unlock()
+		cancel()
+		return ChatResult{SessionID: req.SessionID}, errors.New("session is already generating")
 	}
 	s.sessions[req.SessionID] = cancel
 	s.sessionsMu.Unlock()
@@ -469,13 +500,20 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	result.SessionID = req.SessionID
 	var history sessionRecord
 	if e := s.db.Get(runCtx, "session", req.SessionID, &history); e == nil {
-		if history.Platform != "" && (history.Platform != req.Platform || history.UserID != req.UserID) {
+		if history.Platform != req.Platform || history.UserID != req.UserID {
 			return result, errors.New("session belongs to another user")
 		}
+	} else if !errors.Is(e, sql.ErrNoRows) {
+		return result, e
 	}
 	if history.ID == "" {
 		history = sessionRecord{ID: req.SessionID, Platform: req.Platform, UserID: req.UserID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	}
+	personaID, persona, err := s.resolvePersona(runCtx, req.PersonaID, history)
+	if err != nil {
+		return result, err
+	}
+	history.PersonaID, history.PersonaSelected = personaID, true
 	incoming := append([]hatch.Message(nil), req.Messages...)
 	if req.Prompt != "" {
 		duplicate := len(incoming) > 0 && (incoming[len(incoming)-1].Role == "" || incoming[len(incoming)-1].Role == "user") && strings.TrimSpace(incoming[len(incoming)-1].Content) == strings.TrimSpace(req.Prompt)
@@ -492,10 +530,8 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 			history.Title = history.Title[:80]
 		}
 	}
-	if e := s.db.Put(runCtx, "session", history.ID, history, nil); e != nil {
-		return result, e
-	}
-	err := s.pool.WithClient(runCtx, func(c *hatch.Client, _ pool.Account) error {
+	split, _ := s.Settings()["pool.split"].(bool)
+	err = s.pool.WithClientFor(runCtx, req.Platform, split, func(c *hatch.Client, _ pool.Account) error {
 		hs := make([]hatch.Attachment, 0, len(req.Attachments))
 		for _, u := range req.Attachments {
 			data, e := base64.StdEncoding.DecodeString(u.DataBase64)
@@ -511,9 +547,9 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 			}
 			hs = append(hs, a)
 		}
-		hreq := hatch.GenerateRequest{NodeID: secure.ID(), Prompt: req.Prompt, Model: req.Model, Persona: req.PersonaID, Messages: req.Messages, Attachments: hs}
+		hreq := hatch.GenerateRequest{NodeID: secure.ID(), Prompt: req.Prompt, Model: req.Model, Persona: persona, Messages: req.Messages, Attachments: hs}
 		result.NodeID = hreq.NodeID
-		generated, e := c.Generate(runCtx, hreq, func(ev hatch.Event) error {
+		generated, e := s.generate(runCtx, c, hreq, func(ev hatch.Event) error {
 			ce := ChatEvent{Type: ev.Type, Text: ev.Text, NodeID: result.NodeID, SessionID: req.SessionID}
 			if ev.Attachment != nil {
 				f, err := s.materialize(runCtx, c, *ev.Attachment, req.Platform, req.UserID)
@@ -551,8 +587,9 @@ func (s *Service) Stop(sessionID string) bool {
 	defer s.sessionsMu.Unlock()
 	c, ok := s.sessions[sessionID]
 	if ok {
+		// Keep the lease until Chat unwinds so a replacement request cannot
+		// race the cancelled request's history write or deferred cleanup.
 		c()
-		delete(s.sessions, sessionID)
 	}
 	return ok
 }

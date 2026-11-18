@@ -46,6 +46,7 @@ func publicSettings(values map[string]any) map[string]any {
 type accountImport struct {
 	ID      string
 	Label   string
+	Fields  map[string]any
 	Cookies map[string]string
 }
 
@@ -88,9 +89,20 @@ func parseAccountImports(text string) ([]accountImport, error) {
 			if cookies["hatch_sess"] == "" {
 				return nil, errors.New("missing required hatch_sess cookie")
 			}
+			fields := map[string]any{}
+			for _, key := range []string{"id", "label", "node_id", "pool", "note", "enabled"} {
+				if value, exists := row[key]; exists {
+					fields[key] = value
+				}
+			}
 			id, _ := row["id"].(string)
+			if value, exists := row["id"]; exists {
+				if _, ok := value.(string); !ok {
+					return nil, errors.New("account id must be text")
+				}
+			}
 			label, _ := row["label"].(string)
-			out = append(out, accountImport{ID: id, Label: label, Cookies: cookies})
+			out = append(out, accountImport{ID: id, Label: label, Fields: fields, Cookies: cookies})
 		}
 		if len(out) == 0 {
 			return nil, errors.New("no accounts found")

@@ -552,12 +552,13 @@ func (r Runner) backup(ctx context.Context, c *client, args []string) error {
 	}
 }
 func (r Runner) chat(ctx context.Context, c *client, args []string) error {
-	var prompt, model, session, cookie string
+	var prompt, model, session, cookie, persona string
 	var stream bool
 	f, e := parse("chat", args, func(f *flag.FlagSet) {
 		f.StringVar(&prompt, "prompt", "", "")
 		f.StringVar(&model, "model", "muse-spark", "")
 		f.StringVar(&session, "session", "", "")
+		f.StringVar(&persona, "persona", "", "")
 		f.StringVar(&cookie, "cookie", "", "")
 		f.BoolVar(&stream, "stream", true, "")
 	})
@@ -578,6 +579,9 @@ func (r Runner) chat(ctx context.Context, c *client, args []string) error {
 		return errors.New("prompt required")
 	}
 	if cookie != "" {
+		if persona != "" {
+			return errors.New("saved personas require server chat, without --cookie")
+		}
 		if r.EphemeralChat == nil {
 			return errors.New("ephemeral cookie chat is unsupported")
 		}
@@ -603,7 +607,7 @@ func (r Runner) chat(ctx context.Context, c *client, args []string) error {
 		_, e = fmt.Fprintln(r.Out)
 		return e
 	}
-	body := core.ChatRequest{Prompt: prompt, Model: model, SessionID: session}
+	body := core.ChatRequest{Prompt: prompt, Model: model, SessionID: session, PersonaID: persona}
 	path := "/api/chat"
 	if stream {
 		path += "/stream"
@@ -677,7 +681,7 @@ const usage = `Muse Bridge
   muse-bridge [global options] config set KEY --value JSON | --value-env NAME
   muse-bridge [global options] accounts import --file PRIVATE_FILE | --env NAME
   muse-bridge [global options] accounts list|probe [ID]
-  muse-bridge [global options] chat [--prompt TEXT] [--model muse-spark] [--stream=true]
+  muse-bridge [global options] chat [--prompt TEXT] [--model muse-spark] [--persona ID|_none] [--stream=true]
   muse-bridge chat --cookie env:NAME|file:PRIVATE_FILE [--prompt TEXT]
   muse-bridge [global options] keys create --name NAME --out PRIVATE_FILE
   muse-bridge [global options] keys revoke ID

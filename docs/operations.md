@@ -31,6 +31,15 @@
 
 `asr.download` 可提交可选的 64 位十六进制 `sha256`，不匹配时不写文件；响应的 `path` 为相对数据目录的模型位置，不含宿主机绝对路径。下载限制按实际解码后字节数执行（上限 128 MiB），DNS、连接和读响应共用最多 60 秒期限；禁止自动代理和重定向，私网目标会被拒绝。
 
+## 账号节点、流量分池和人设
+
+- 账号 `node_id` 绑定启用节点并读取其加密代理地址，下一次请求会检查节点是否仍有效、URL 是否更新。删除/禁用绑定节点后，该账号不可使用；清空 `node_id` 才恢复默认代理配置。没有实现自动选优或故障切换到其他节点。
+- `pool.split=true` 时 API 使用 api/shared，Web/Telegram 使用 chat/shared；无符合条件的账号立即失败，只有账号忙碌时才等待。旧账号未设置 pool 按 shared 处理，刷新 Cookie 不重置 pool/node/note/enabled。JSON 导入可以显式提供这些字段。
+- 节点或 Cookie 更新等当前请求完成后用于下一次请求；修改 label/note 不关闭当前连接。删除账号或停止服务仍会关闭连接。请求完成不得覆盖期间写入的新账号元数据或凭证。
+- 新 Web 会话未选择人设时使用 `persona.default_id`；选择后随会话持久化。缺失或停用的人设在调用生成前报错，不写入失败用户消息。生成中的同一会话不接受第二个生成或人设/历史改写。
+- CLI：`chat --persona ID` 或 `--persona _none`；临时 `--cookie` 模式没有服务端预设库，会拒绝同时指定保存的人设。OpenAI 请求可添加 `persona_id`；管理员 action `sessions.persona` 使用 `id` 和 `persona_id`。Telegram 使用 `/persona` 查看、`/persona ID` 切换、`/persona none` 关闭。
+- 人设是尽力引导，不替换 Muse 内置提示词。前端测试覆盖选择、失败恢复、异步切会话和定时刷新竞态；尚未完成真实浏览器视觉走查或真实 Muse 人设服从测试。
+
 ## 验证记录模板
 
 ```text
