@@ -23,33 +23,34 @@ import (
 )
 
 type Service struct {
-	life              context.Context
-	cancel            context.CancelFunc
-	db                *store.Store
-	vault             *secure.Vault
-	redactor          *secure.Redactor
-	dataDir           string
-	fileRoot          *os.Root
-	settingsMu        sync.RWMutex
-	settings          map[string]any
-	settingsHook      func(map[string]any) error
-	pool              *pool.Pool
-	generate          func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
-	media             *media.Processor
-	gate              chan struct{}
-	queueMu           sync.Mutex
-	queued            int
-	sessionsMu        sync.Mutex
-	sessions          map[string]context.CancelFunc
-	telegramSessionMu sync.Mutex
-	telegramCommandMu sync.Mutex
-	telegramCommands  map[string]chan struct{}
-	scheduleMu        sync.Mutex
-	scheduleCallback  ScheduleCallback
-	scheduleRuns      map[string]bool
-	schedulerWG       sync.WaitGroup
-	executionWG       sync.WaitGroup
-	closeOnce         sync.Once
+	life               context.Context
+	cancel             context.CancelFunc
+	db                 *store.Store
+	vault              *secure.Vault
+	redactor           *secure.Redactor
+	dataDir            string
+	fileRoot           *os.Root
+	settingsMu         sync.RWMutex
+	settings           map[string]any
+	settingsHook       func(map[string]any) error
+	pool               *pool.Pool
+	generate           func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
+	media              *media.Processor
+	gate               chan struct{}
+	queueMu            sync.Mutex
+	queued             int
+	sessionsMu         sync.Mutex
+	sessions           map[string]context.CancelFunc
+	telegramSessionMu  sync.Mutex
+	telegramCommandMu  sync.Mutex
+	telegramCommands   map[string]chan struct{}
+	telegramDeliveries map[string]chan struct{}
+	scheduleMu         sync.Mutex
+	scheduleCallback   ScheduleCallback
+	scheduleRuns       map[string]bool
+	schedulerWG        sync.WaitGroup
+	executionWG        sync.WaitGroup
+	closeOnce          sync.Once
 }
 
 type fileRecord struct {
@@ -444,6 +445,11 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		defer s.sessionsMu.Unlock()
 		s.telegramCommandMu.Lock()
 		defer s.telegramCommandMu.Unlock()
+		if deliveryPending, err := s.telegramCommandDeliveryPendingLocked(id); err != nil {
+			return nil, err
+		} else if deliveryPending {
+			return nil, errors.New("Telegram command delivery is in progress")
+		}
 		if s.sessions[id] != nil {
 			return nil, errors.New("session is generating")
 		}

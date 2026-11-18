@@ -48,6 +48,173 @@ func TestTelegramCommandDuplicateReusesPersistedResult(t *testing.T) {
 		t.Fatal("foreign sender reused command identity")
 	}
 }
+func TestTelegramCommandDeliveryIsDeduplicatedAndRetriesFailedSend(t *testing.T) {
+	s, db := testService(t)
+	ctx := context.Background()
+	session := "telegram_42"
+	if err := db.Put(ctx, "session", session, sessionRecord{ID: session, Platform: "telegram", UserID: "42"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TelegramCommandOnce(ctx, session, 42, 7, 9, "retry", func() (string, error) { return "reply", nil }); err != nil {
+		t.Fatal(err)
+	}
+	var attempts atomic.Int32
+	_, err := s.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { attempts.Add(1); return errors.New("send failed") })
+	if err == nil {
+		t.Fatal("failed send accepted")
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, e := s.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { attempts.Add(1); return nil })
+			if e != nil {
+				errs <- e
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatal(e)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("successful sends were duplicated or failed retry suppressed: calls=%d", got)
+	}
+	reopened, err := New(ctx, db, s.vault, s.redactor, s.dataDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	_, err = reopened.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { attempts.Add(1); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 2 {
+		t.Fatal("persisted delivery marker did not suppress restart replay")
+	}
+}
+
+func TestTelegramCommandDeliveryIsIdempotentAndRetriesFailure(t *testing.T) {
+	s, db := testService(t)
+	ctx := context.Background()
+	session := "telegram_42"
+	if err := db.Put(ctx, "session", session, sessionRecord{ID: session, Platform: "telegram", UserID: "42"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TelegramCommandOnce(ctx, session, 42, 7, 9, "retry", func() (string, error) { return "reply", nil }); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	_, err := s.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { calls.Add(1); return errors.New("send failed") })
+	if err == nil {
+		t.Fatal("failed delivery accepted")
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, e := s.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { calls.Add(1); return nil })
+			if e != nil {
+				errs <- e
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Fatal(e)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("delivery calls=%d, want failed send plus one success", calls.Load())
+	}
+	reopened, err := New(ctx, db, s.vault, s.redactor, s.dataDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	_, err = reopened.TelegramCommandDeliver(ctx, 42, 7, 9, "retry", func() error { calls.Add(1); return nil })
+	if err != nil || calls.Load() != 2 {
+		t.Fatal("successful command reply was sent again after restart")
+	}
+}
+
+func TestLiveCommandDeliveryDoesNotSuppressCompletedReply(t *testing.T) {
+	s, db := testService(t)
+	ctx := context.Background()
+	session := "telegram_42"
+	entered, finish := make(chan struct{}), make(chan struct{})
+	commandDone := make(chan error, 1)
+	go func() {
+		_, err := s.TelegramCommandOnce(ctx, session, 42, 7, 12, "retry", func() (string, error) { close(entered); <-finish; return "final result", nil })
+		commandDone <- err
+	}()
+	<-entered
+	var attempts atomic.Int32
+	handled, err := s.TelegramCommandDeliver(ctx, 42, 7, 12, "retry", func() error { attempts.Add(1); return nil })
+	close(finish)
+	if err != nil || !handled || attempts.Load() != 0 {
+		t.Fatalf("live command delivery: handled=%v attempts=%d err=%v", handled, attempts.Load(), err)
+	}
+	if err := <-commandDone; err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.TelegramCommandDeliver(ctx, 42, 7, 12, "retry", func() error { attempts.Add(1); return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts.Load() != 1 {
+		t.Fatalf("pending notice/final reply delivered %d times", attempts.Load())
+	}
+	var record telegramCommandRecord
+	key := telegramCommandKey(42, 12)
+	if err = db.Get(ctx, "telegram_command", key, &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Status != "done" || !record.Delivered {
+		t.Fatalf("final command state=%#v", record)
+	}
+}
+
+func TestResetRefusesDuringTelegramReplyDeliveryWithoutPartialMutation(t *testing.T) {
+	s, db := testService(t)
+	ctx := context.Background()
+	session := "telegram_42"
+	if err := db.Put(ctx, "session", session, sessionRecord{ID: session, Platform: "telegram", UserID: "42"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RememberTelegramPrompt(ctx, session, "7", "retry this"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.TelegramCommandOnce(ctx, session, 42, 7, 3, "retry", func() (string, error) { return "reply", nil }); err != nil {
+		t.Fatal(err)
+	}
+	entered, finish := make(chan struct{}), make(chan struct{})
+	deliverDone := make(chan error, 1)
+	go func() {
+		_, err := s.TelegramCommandDeliver(ctx, 42, 7, 3, "retry", func() error { close(entered); <-finish; return nil })
+		deliverDone <- err
+	}()
+	<-entered
+	if _, err := s.Action(ctx, "sessions.reset", map[string]any{"id": session}); err == nil {
+		t.Fatal("reset succeeded during active command delivery")
+	}
+	if prompt, err := s.TelegramLastPrompt(ctx, session, "7"); err != nil || prompt != "retry this" {
+		t.Fatal("failed reset partially deleted retry state")
+	}
+	close(finish)
+	if err := <-deliverDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Action(ctx, "sessions.reset", map[string]any{"id": session}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResetInvalidatesStoredTelegramCommandResponse(t *testing.T) {
 	s, db := testService(t)
 	ctx := context.Background()

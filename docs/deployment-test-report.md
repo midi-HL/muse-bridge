@@ -2,7 +2,7 @@
 
 ## 版本与环境
 
-- 最新已发布稳定版：v0.1.30，含跨架构生成物 ID 修复；其 Telegram `/new`/`/retry` 可靠性工作仍在未发布工作树内。
+- 最新已发布稳定版：v0.1.30，包含 Telegram session/retry 修复及新生成 file ID 跨架构兼容修复；本报告后续列出的“旧 file ID 读取兼容”是额外待发补丁。
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
@@ -23,6 +23,13 @@
 - Windows/386 backup ID 问题随后在 `fab3b91` 修复，定向 stress 50 次通过；其 Windows amd64 正式产物 SHA-256 为 `bf47a335c139e58c7ee5550aeef3e34251227ba90bd501e5761fb48b6dd36cd9`，已做隔离 HTTP 启动 smoke。
 - 最新本地 `go vet`、全库 tests、Node 12 项和纯 Go build 通过。最终独立 review agent 异常中止；定向 reviewer 曾复核 webhooks filter-before-bind pass，最终整体独立 verdict 不可得，不声称完整独立 review pass。真实 Telegram Bot token 未提供，无外部 E2E。
 
+
+## Telegram 轮询、回执与旧文件 ID 兼容补丁（待发布）
+
+- 轮询保留运行被关闭时尚未确认的更新，运行内的重复投递会跳过已处理的更新。会话绑定或短命令失败只自动重试一次，避免永久钉住确认位置。非文本更新在会话绑定前忽略。
+- 模拟 Telegram Bot API 的 Webhook 测试先让 `/retry` 回执发送失败，再重推同一更新，验证补发成功、再次重推跳过发送、原重试只生成一次，另一条 `/retry` 仍可独立执行。外部 Telegram 回执与本地落库之间仍有失败窗口，分段发送中途失败也可能导致重复分段。
+- 会话迁移与重置共用会话锁，回执发送期间重置会返回冲突。导入在写入前验证 Telegram 记录类型与身份，兼容缺少 sender 的历史记录。v0.1.30 会拒绝 `_` 或 `-` 开头的旧文件 ID。直接读取与备份导入回归验证了旧 ID 兼容，文件所有权与目录约束继续生效。
+- 本补丁的正式发布证据待补录。
 
 ## v0.1.27 运行时配置修复（已发布）
 

@@ -79,6 +79,10 @@ func (h *telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, e
 	return telegram.Response{Text: result.Text}, err
 }
 
+func (h *telegramServiceHandler) DeliverCommand(ctx context.Context, r telegram.Request, cmd telegram.Command, send func() error) (bool, error) {
+	return h.service.TelegramCommandDeliver(ctx, r.ChatID, r.UserID, r.MessageID, cmd.Name, send)
+}
+
 func (h *telegramServiceHandler) Command(ctx context.Context, r telegram.Request, cmd telegram.Command) (telegram.Response, error) {
 	session, err := h.currentSession(ctx, r)
 	if err != nil {

@@ -76,7 +76,9 @@ func (s *Service) importedFileName(rec fileRecord, id string) (string, error) {
 }
 
 func validFileID(id string) bool {
-	if id == "" || len(id) > 128 || !managedID.MatchString(id) {
+	// Historical secure.ID values can begin with '_' or '-'. HTTP routing
+	// separately rejects separators and traversal; keep legacy IDs accessible.
+	if id == "" || len(id) > 128 {
 		return false
 	}
 	for _, r := range id {

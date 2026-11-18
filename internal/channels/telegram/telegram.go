@@ -65,6 +65,12 @@ type SessionBinder interface {
 	BindSession(context.Context, Request) (Request, error)
 }
 
+// CommandDelivery coordinates a persisted command result with external reply
+// delivery so redelivered updates do not send duplicate successful messages.
+type CommandDelivery interface {
+	DeliverCommand(context.Context, Request, Command, func() error) (bool, error)
+}
+
 type Handler interface {
 	Chat(context.Context, Request, func(string) error) (Response, error)
 	Command(context.Context, Request, Command) (Response, error)
@@ -106,8 +112,6 @@ func (c Callbacks) Feedback(ctx context.Context, r Request, d Delivery) error {
 type Client struct {
 	token, base string
 	http        *http.Client
-	mu          sync.Mutex
-	offset      int64
 }
 
 func NewClient(token string, h *http.Client) (*Client, error) {
@@ -378,6 +382,14 @@ func parseTelegramCommand(text string) (Command, bool) {
 	return Command{Name: strings.ToLower(name), Target: strings.ToLower(target), Args: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), parts[0]))}, true
 }
 
+// commandReplyError distinguishes a failed receipt from a failed command.
+// Webhook callers still receive the delivery error; polling cannot retry the
+// whole update just to resend a receipt for a command that already ran.
+type commandReplyError struct{ err error }
+
+func (e *commandReplyError) Error() string { return e.err.Error() }
+func (e *commandReplyError) Unwrap() error { return e.err }
+
 // Run never waits for a model response before polling a stop command. Long
 // operations are bounded and registered before dispatch, so an immediately
 // following stop can cancel them even before their goroutine starts.
@@ -391,15 +403,33 @@ func (ch *Channel) Run(ctx context.Context) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	var jobs sync.WaitGroup
 	defer func() { cancel(); jobs.Wait() }()
-	type pendingJob struct {
-		cancel context.CancelFunc
-		token  *struct{ n byte }
-	}
-	pending := map[int64]pendingJob{}
-	var pendingMu sync.Mutex
-	for {
-		if runCtx.Err() != nil {
+
+	type updateState uint8
+	const (
+		ready updateState = iota // seen in a batch, but not dispatched (or eligible for retry)
+		pending
+		completed
+	)
+	var mu sync.Mutex // protects the per-bot update maps and active jobs
+	active := map[int64]context.CancelFunc{}
+	var polledToken string
+	var highestSeen int64
+	var seen map[int64]updateState
+	var failedAttempts map[int64]int
+	const maxUpdateAttempts = 2
+	waitToPoll := func() error {
+		timer := time.NewTimer(ch.poll)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-runCtx.Done():
 			return runCtx.Err()
+		}
+	}
+	for {
+		if err := runCtx.Err(); err != nil {
+			return err
 		}
 		ch.mu.Lock()
 		mode = ch.mode
@@ -408,20 +438,26 @@ func (ch *Channel) Run(ctx context.Context) error {
 		if mode != "polling" || client == nil {
 			return nil
 		}
-		ch.mu.Lock()
-		offset := client.offset
-		ch.mu.Unlock()
+		if seen == nil || client.token != polledToken {
+			// Telegram update IDs belong to the bot, not the HTTP client.
+			// Do not carry an offset over if Channel.Reload switches tokens.
+			polledToken = client.token
+			highestSeen = -1
+			seen = make(map[int64]updateState)
+			failedAttempts = make(map[int64]int)
+		}
+		mu.Lock()
+		offset := highestSeen + 1
+		for id, state := range seen {
+			if state != completed && id < offset {
+				offset = id
+			}
+		}
+		mu.Unlock()
 		raw, err := client.call(runCtx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(offset, 10)}})
 		if err != nil {
-			if runCtx.Err() != nil {
-				return runCtx.Err()
-			}
-			timer := time.NewTimer(ch.poll)
-			select {
-			case <-timer.C:
-			case <-runCtx.Done():
-				timer.Stop()
-				return runCtx.Err()
+			if err := waitToPoll(); err != nil {
+				return err
 			}
 			continue
 		}
@@ -429,72 +465,115 @@ func (ch *Channel) Run(ctx context.Context) error {
 		if json.Unmarshal(raw, &items) != nil {
 			return errors.New("telegram: invalid update response")
 		}
+		// Register the whole batch before dispatch: a later update may be
+		// completed while an earlier one is still pending or waiting to retry.
+		mu.Lock()
+		for id := range seen {
+			if id < offset {
+				delete(seen, id)
+				delete(failedAttempts, id)
+			}
+		}
 		for _, u := range items {
-			if !ch.acceptsUpdate(u) {
-				ch.mu.Lock()
-				if ch.client == client {
-					client.offset = u.UpdateID + 1
-				}
-				ch.mu.Unlock()
+			if u.UpdateID < offset {
 				continue
 			}
-			command, isCommand := parseTelegramCommand(u.Message.Text)
-			req, bindErr := ch.bindUpdate(runCtx, u)
-			if bindErr != nil {
-				_, _ = client.Send(runCtx, u.Message.Chat.ID, "无法确定当前会话，请稍后重试。", false)
-				ch.mu.Lock()
-				if ch.client == client {
-					client.offset = u.UpdateID + 1
-				}
-				ch.mu.Unlock()
+			if _, exists := seen[u.UpdateID]; !exists {
+				seen[u.UpdateID] = ready
+			}
+			if u.UpdateID > highestSeen {
+				highestSeen = u.UpdateID
+			}
+		}
+		mu.Unlock()
+		dispatched := false
+		retryPending := false
+		for _, u := range items {
+			if err := runCtx.Err(); err != nil {
+				return err
+			}
+			if u.UpdateID < offset {
 				continue
 			}
-			long := !isCommand || command.Name == "retry"
-			if long {
-				pendingMu.Lock()
-				_, busy := pending[u.Message.Chat.ID]
-				full := len(pending) >= 8
-				if busy || full {
-					pendingMu.Unlock()
-					if _, err = client.Send(runCtx, u.Message.Chat.ID, "当前聊天或服务正在生成，请稍后重试；可发送 /stop 停止。", false); err != nil {
-						break
+			mu.Lock()
+			state := seen[u.UpdateID]
+			mu.Unlock()
+			if state != ready {
+				continue
+			}
+			dispatched = true
+			if ch.acceptsUpdate(u) {
+				command, isCommand := parseTelegramCommand(u.Message.Text)
+				req, bindErr := ch.bindUpdate(runCtx, u)
+				switch {
+				case bindErr != nil:
+					failedAttempts[u.UpdateID]++
+					if failedAttempts[u.UpdateID] < maxUpdateAttempts {
+						retryPending = true
+						continue
 					}
-				} else {
-					jobCtx, jobCancel := context.WithCancel(runCtx)
-					token := &struct{ n byte }{1}
-					pending[u.Message.Chat.ID] = pendingJob{cancel: jobCancel, token: token}
-					jobs.Add(1)
-					go func(item Request) {
-						defer jobs.Done()
-						defer jobCancel()
-						defer func() {
-							pendingMu.Lock()
-							if current, ok := pending[item.ChatID]; ok && current.token == token {
-								delete(pending, item.ChatID)
+					_, _ = client.Send(runCtx, u.Message.Chat.ID, "无法确定当前会话，请稍后重试。", false)
+				case !isCommand || command.Name == "retry":
+					mu.Lock()
+					if active[u.Message.Chat.ID] == nil && len(active) < 8 {
+						jobCtx, jobCancel := context.WithCancel(runCtx)
+						active[u.Message.Chat.ID] = jobCancel
+						seen[u.UpdateID] = pending
+						jobs.Add(1)
+						go func(states map[int64]updateState, id, chatID int64, item Request) {
+							defer jobs.Done()
+							defer jobCancel()
+							_ = ch.handleRequest(jobCtx, item)
+							mu.Lock()
+							// /stop cancels only the job, so it is still handled.
+							// A canceled Run must leave unfinished updates unconfirmed.
+							if runCtx.Err() == nil {
+								states[id] = completed
 							}
-							pendingMu.Unlock()
-						}()
-						_ = ch.handleRequest(jobCtx, item)
-					}(req)
-					pendingMu.Unlock()
-				}
-			} else {
-				if command.Name == "stop" {
-					pendingMu.Lock()
-					if job, ok := pending[u.Message.Chat.ID]; ok {
-						job.cancel()
+							delete(active, chatID)
+							mu.Unlock()
+						}(seen, u.UpdateID, u.Message.Chat.ID, req)
+						mu.Unlock()
+						continue
 					}
-					pendingMu.Unlock()
-				}
-				if err = ch.handleRequest(runCtx, req); err != nil && !errors.Is(err, ErrUnsupported) {
-					break
+					mu.Unlock()
+					// A failed busy notice does not make the rejection retryable.
+					_, _ = client.Send(runCtx, u.Message.Chat.ID, "当前聊天或服务正在生成，请稍后重试；可发送 /stop 停止。", false)
+				default:
+					// A redelivered stop receipt must not cancel a newer worker.
+					if command.Name == "stop" && failedAttempts[u.UpdateID] == 0 {
+						mu.Lock()
+						if stop := active[u.Message.Chat.ID]; stop != nil {
+							stop()
+						}
+						mu.Unlock()
+					}
+					var replyErr *commandReplyError
+					if err := ch.handleRequest(runCtx, req); err != nil && !errors.Is(err, ErrUnsupported) {
+						failedAttempts[u.UpdateID]++
+						if failedAttempts[u.UpdateID] < maxUpdateAttempts {
+							retryPending = true
+							continue
+						}
+						// A permanently failing update must eventually release the offset.
+						if !errors.As(err, &replyErr) {
+							_, _ = client.Send(runCtx, req.ChatID, "命令处理失败，请发送一条新命令重试。", false)
+						}
+					}
 				}
 			}
-			ch.mu.Lock()
-			if ch.client == client {
-				client.offset = u.UpdateID + 1
+			mu.Lock()
+			if runCtx.Err() == nil {
+				seen[u.UpdateID] = completed
 			}
-			ch.mu.Unlock()
+			mu.Unlock()
+		}
+		// Telegram immediately returns unconfirmed updates. Pace polls that
+		// served only duplicates so a pending worker does not cause a hot loop.
+		if retryPending || (!dispatched && len(items) != 0) {
+			if err := waitToPoll(); err != nil {
+				return err
+			}
 		}
 	}
 }
@@ -505,6 +584,9 @@ func (ch *Channel) requestFromUpdate(u update) Request {
 // acceptsUpdate is a pure preflight: rejecting an update must not create a
 // persistent Telegram chat pointer or any other session state.
 func (ch *Channel) acceptsUpdate(u update) bool {
+	if u.Message.Chat.ID == 0 || strings.TrimSpace(u.Message.Text) == "" {
+		return false
+	}
 	ch.mu.Lock()
 	allowed, botUsername := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID], ch.botUsername
 	ch.mu.Unlock()
@@ -554,7 +636,22 @@ func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 			return e
 		}
 		if resp.Text != "" {
-			_, e = client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+			send := func() error {
+				_, sendErr := client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+				if sendErr != nil {
+					return &commandReplyError{err: sendErr}
+				}
+				return nil
+			}
+			if delivery, ok := handler.(CommandDelivery); ok {
+				var handled bool
+				handled, e = delivery.DeliverCommand(ctx, r, command, send)
+				if e == nil && !handled {
+					e = send()
+				}
+			} else {
+				e = send()
+			}
 		}
 		return e
 	}

@@ -40,10 +40,11 @@
 - 节点或 Cookie 更新等当前请求完成后用于下一次请求；修改 label/note 不关闭当前连接。删除账号或停止服务仍会关闭连接。请求完成不得覆盖期间写入的新账号元数据或凭证。
 - 新 Web 会话未选择人设时使用 `persona.default_id`；选择后随会话持久化。缺失或停用的人设在调用生成前报错，不写入失败用户消息。生成中的同一会话不接受第二个生成或人设/历史改写。
 - CLI：`chat --persona ID` 或 `--persona _none`；临时 `--cookie` 模式没有服务端预设库，会拒绝同时指定保存的人设。OpenAI 请求可添加 `persona_id`；管理员 action `sessions.persona` 使用 `id` 和 `persona_id`。Telegram 使用 `/persona` 查看、`/persona ID` 切换、`/persona none` 关闭。
-- Telegram `/new` 会为当前 chat 持久化新的会话指针；聊天、`/stop`、`/persona` 和 `/retry` 使用该指针，重启后恢复。`/retry` 重用该发送者最近一次通过 core 会话租约的尝试，并携带不可复用的 attempt ID；新请求会使排队中的旧 retry 失效。首次生成失败也可重试；每次 retry 是新尝试、追加独立 turn，不会按相同文本覆写其他成功答复；失败不污染历史。
-- retry 记录按 sender ID 隔离。同一 Webhook command 的 `(chat_id,message_id)` 结果持久化，重复投递复用缓存结果、不重复生成。`sessions.reset` 会清除 retry 记录与缓存 command answer；命令完成写回与 reset 共享互斥区，不能用旧结果覆盖失效标记；与正在执行的 core chat 冲突时拒绝 reset。
-- Telegram pointer、retry 和 command 状态纳入加密备份导入/导出。旧版本 `telegram_<chatID>` 群聊历史首次访问时保留旧创建者标识，并将历史 owner 迁移为 chat owner，避免升级后丢失上下文。Webhook 和长轮询均在白名单/目标预检后、发送状态占位或提交异步队列前绑定会话，避免 `/new` 竞态；普通重试按 attempt ID 验证，重复 webhook command 回执按 `(chat_id,message_id)` 幂等。
-- 长轮询对普通生成采用有界后台分派；每条更新在排队/发送占位消息前绑定会话指针，后续 `/new` 不会把已接收消息改投到新会话。忙碌或队列满时回复明确提示、要求发送者重试；控制命令独立处理，`/stop` 会取消该 chat 所有已注册 core lease；生成取消会清理未显示内容的 Telegram 占位消息。更新写入服务前遵循 polling offset 处理，外部 E2E 未运行。
+- Telegram `/new` 按聊天保存当前会话，重启后恢复。普通消息和 `/retry` 使用接收时绑定的会话。群成员可以用 `/persona` 查看预设，会话创建者可以切换。`/stop` 会请求取消该聊天的活跃生成，包含刚被 `/new` 切换掉的旧会话。取消后会尝试删除空占位消息。
+- `/retry` 重用当前会话中该发送者最近一次获准生成的输入。失败后的输入仍可重试，过期尝试标识会被拒绝。成功的重试追加一组用户消息和回答，已有回答保留。失败或取消的生成不写入历史。
+- Telegram 按 `(chat_id,message_id)` 缓存命令结果。Webhook 回执发送失败时，重推会复用缓存。成功的发送回执落库后，后续重推会跳过发送。若进程在 Telegram 接受回执与本地落库之间退出，或长回复只有部分分段送达，重推仍可能重复发送。`sessions.reset` 会删除重试输入并使缓存回答失效。该会话在生成或发送回执期间，重置会返回冲突。
+- 长轮询使用有界后台任务，普通生成期间仍可处理 `/stop`。轮询确认位置保持在最早未完成的更新，当前轮询运行内会跳过重复收到的已处理更新。被关闭打断的更新仍可由 Telegram 重投。绑定会话或处理短命令出错时，每条更新在当次运行中最多尝试两次。聊天忙碌或任务已满时会尝试发出提示，发送者可以稍后重试。
+- 加密备份包含 Telegram 会话指针、重试输入和命令状态，导入会在写入前校验 Telegram 记录。旧群聊历史在首次访问时迁移为按聊天归属，保留创建者和历史。白名单和目标 bot 校验发生在会话绑定之前。
 - 人设是尽力引导，不替换 Muse 内置提示词。前端测试覆盖选择、失败恢复、异步切会话和定时刷新竞态；Telegram session/retry 由 core 与 command 测试覆盖；尚未完成真实浏览器视觉走查或真实 Muse 人设服从测试。
 
 ## 验证记录模板

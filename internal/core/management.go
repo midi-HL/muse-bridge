@@ -463,8 +463,15 @@ func (s *Service) importBackup(ctx context.Context, args map[string]any) (any, e
 	for index, row := range env.Records {
 		// Store.Export already excludes auth/admin_session/api_key. Keep the
 		// allowlist here too so a hand-crafted backup cannot reintroduce them.
-		if !backupKinds[row.Kind] || !managedID.MatchString(row.ID) || len(row.Data) == 0 || !json.Valid(row.Data) {
+		validID := managedID.MatchString(row.ID)
+		if row.Kind == "file" {
+			validID = validFileID(row.ID)
+		}
+		if !backupKinds[row.Kind] || !validID || len(row.Data) == 0 || !json.Valid(row.Data) {
 			return nil, errors.New("backup contains an invalid or forbidden record")
+		}
+		if err := validateTelegramBackupRecord(row); err != nil {
+			return nil, errors.New("backup contains an invalid or forbidden Telegram record")
 		}
 		if row.Kind == "file" {
 			var rec fileRecord

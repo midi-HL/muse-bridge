@@ -14,6 +14,68 @@ import (
 	"github.com/midi-HL/muse-bridge/internal/secure"
 )
 
+func TestLegacyRawURLFileIDsRemainAccessible(t *testing.T) {
+	s, db := testService(t)
+	for _, id := range []string{"_legacySafeID", "-legacySafeID"} {
+		name := id + ".bin"
+		path := filepath.Join(s.dataDir, "files", name)
+		if err := os.WriteFile(path, []byte("legacy payload"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Put(context.Background(), "file", id, fileRecord{File: File{ID: id, Filename: "legacy.txt"}, Path: name}, nil); err != nil {
+			t.Fatal(err)
+		}
+		f, _, err := s.OpenFile(context.Background(), id, "", "")
+		if err != nil {
+			t.Fatalf("legacy id %q became unreadable: %v", id, err)
+		}
+		b, err := io.ReadAll(f)
+		_ = f.Close()
+		if err != nil || string(b) != "legacy payload" {
+			t.Fatalf("legacy content id %q: %q %v", id, b, err)
+		}
+	}
+}
+
+func TestLegacyRawURLFileIDsSurviveBackupImport(t *testing.T) {
+	s, db := testService(t)
+	ctx := context.Background()
+	ids := []string{"_legacySafeID", "-legacySafeID"}
+	for _, id := range ids {
+		name := id + ".bin"
+		if err := os.WriteFile(filepath.Join(s.dataDir, "files", name), []byte("legacy payload"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Put(ctx, "file", id, fileRecord{File: File{ID: id, Filename: "legacy.txt"}, Path: name}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pass := "legacy-file-backup-passphrase"
+	out, err := s.Action(ctx, "backup.export", map[string]any{"passphrase": pass})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, _ := testService(t)
+	if _, err = target.Action(ctx, "backup.import", map[string]any{"passphrase": pass, "blob": out.(map[string]any)["blob"]}); err != nil {
+		t.Fatalf("legacy file IDs rejected from backup: %v", err)
+	}
+	for _, id := range ids {
+		name := id + ".bin"
+		if err := os.WriteFile(filepath.Join(target.dataDir, "files", name), []byte("restored legacy payload"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		f, _, err := target.OpenFile(ctx, id, "", "")
+		if err != nil {
+			t.Fatalf("restored legacy id %q unavailable: %v", id, err)
+		}
+		b, err := io.ReadAll(f)
+		_ = f.Close()
+		if err != nil || string(b) != "restored legacy payload" {
+			t.Fatalf("restored content %q %v", b, err)
+		}
+	}
+}
+
 func TestGeneratedFilesUseOpaqueNamesAndKeyOwnership(t *testing.T) {
 	s, db := testService(t)
 	ctx := context.Background()

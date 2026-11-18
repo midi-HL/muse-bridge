@@ -5,11 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
-
-	"github.com/midi-HL/muse-bridge/internal/secure"
 )
 
 type telegramCommandRecord struct {
@@ -20,6 +17,7 @@ type telegramCommandRecord struct {
 	Command   string `json:"command"`
 	Status    string `json:"status"`
 	Text      string `json:"text,omitempty"`
+	Delivered bool   `json:"delivered,omitempty"`
 	UpdatedAt string `json:"updated_at"`
 }
 
@@ -30,7 +28,7 @@ func (s *Service) TelegramCommandOnce(ctx context.Context, session string, chatI
 	if messageID <= 0 {
 		return fn()
 	}
-	key := "tg_" + secure.Digest(strconv.FormatInt(chatID, 10) + ":" + strconv.Itoa(messageID))[:40]
+	key := telegramCommandKey(chatID, messageID)
 	for {
 		s.telegramCommandMu.Lock()
 		if wait := s.telegramCommands[key]; wait != nil {
@@ -103,6 +101,99 @@ func (s *Service) TelegramCommandOnce(ctx context.Context, session string, chatI
 		return text, callErr
 	}
 }
+
+// TelegramCommandDeliver prevents concurrent or restarted copies of the same
+// command update from sending a second successful reply. Failed sends remain
+// eligible for a later redelivery.
+func (s *Service) TelegramCommandDeliver(ctx context.Context, chatID, userID int64, messageID int, name string, send func() error) (bool, error) {
+	if messageID <= 0 {
+		return true, send()
+	}
+	key := telegramCommandKey(chatID, messageID)
+	for {
+		s.telegramCommandMu.Lock()
+		if wait := s.telegramDeliveries[key]; wait != nil {
+			s.telegramCommandMu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return false, ctx.Err()
+			}
+		}
+		var record telegramCommandRecord
+		err := s.db.Get(ctx, "telegram_command", key, &record)
+		if err != nil {
+			s.telegramCommandMu.Unlock()
+			return false, err
+		}
+		if record.ChatID != chatID || record.UserID != userID || record.MessageID != messageID || record.Command != name {
+			s.telegramCommandMu.Unlock()
+			return false, errors.New("Telegram command identity mismatch")
+		}
+		if record.Status == "invalidated" {
+			s.telegramCommandMu.Unlock()
+			return true, nil
+		}
+		// TelegramCommandOnce waits for a live command. An incomplete notice
+		// can therefore be delivered only for a settled failure or orphaned claim.
+		if s.telegramCommands[key] != nil {
+			s.telegramCommandMu.Unlock()
+			return true, nil
+		}
+		if record.Status != "done" && record.Status != "pending" && record.Status != "failed" {
+			s.telegramCommandMu.Unlock()
+			return false, nil
+		}
+		if record.Delivered {
+			s.telegramCommandMu.Unlock()
+			return true, nil
+		}
+		if s.telegramDeliveries == nil {
+			s.telegramDeliveries = map[string]chan struct{}{}
+		}
+		finished := make(chan struct{})
+		s.telegramDeliveries[key] = finished
+		s.telegramCommandMu.Unlock()
+		sendErr := send()
+		s.telegramCommandMu.Lock()
+		var latest telegramCommandRecord
+		loadErr := s.db.Get(context.Background(), "telegram_command", key, &latest)
+		if loadErr == nil && latest.Status == "invalidated" {
+			delete(s.telegramDeliveries, key)
+			close(finished)
+			s.telegramCommandMu.Unlock()
+			return true, nil
+		}
+		// A delivery marker belongs to the exact result read before sending.
+		// A pending notice must never mark a later completed answer delivered.
+		if sendErr == nil && loadErr == nil && latest == record {
+			latest.Delivered = true
+			latest.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+			saveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			saveErr := s.db.Put(saveCtx, "telegram_command", key, latest, nil)
+			cancel()
+			delete(s.telegramDeliveries, key)
+			close(finished)
+			s.telegramCommandMu.Unlock()
+			if saveErr != nil {
+				return false, errors.New("cannot persist Telegram delivery result")
+			}
+			return true, nil
+		}
+		delete(s.telegramDeliveries, key)
+		close(finished)
+		s.telegramCommandMu.Unlock()
+		if sendErr != nil {
+			return false, sendErr
+		}
+		if loadErr != nil {
+			return false, loadErr
+		}
+		return true, nil
+	}
+}
+
 func invokeTelegramCommand(fn func() (string, error)) (text string, err error) {
 	defer func() {
 		if recover() != nil {
@@ -111,6 +202,23 @@ func invokeTelegramCommand(fn func() (string, error)) (text string, err error) {
 		}
 	}()
 	return fn()
+}
+
+func (s *Service) telegramCommandDeliveryPendingLocked(sessionID string) (bool, error) {
+	rows, err := s.db.List(context.Background(), "telegram_command")
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		var rec telegramCommandRecord
+		if err = json.Unmarshal(row.Data, &rec); err != nil {
+			return false, errors.New("invalid Telegram command state")
+		}
+		if rec.SessionID == sessionID && s.telegramDeliveries[row.ID] != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Service) invalidateTelegramCommands(ctx context.Context, sessionID string) error {

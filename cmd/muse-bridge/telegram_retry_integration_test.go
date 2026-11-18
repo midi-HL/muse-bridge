@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +106,84 @@ func TestTelegramHandlerRetryAfterFailureAndStopCurrentSession(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("/stop did not cancel current chat session")
+	}
+}
+
+type telegramTestTransport func(*http.Request) (*http.Response, error)
+
+func (f telegramTestTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTelegramWebhookRetryRedeliveryReusesReply(t *testing.T) {
+	ctx := context.Background()
+	svc, db := newTelegramIntegrationService(t)
+	h := &telegramServiceHandler{service: svc}
+	req := telegram.Request{ChatID: 4242, UserID: 12, Text: "retry this prompt"}
+	session, err := h.currentSession(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generations int
+	svc.SetGenerateForTest(func(_ context.Context, _ *hatch.Client, r hatch.GenerateRequest, _ func(hatch.Event) error) (hatch.GenerateResult, error) {
+		generations++
+		if r.Prompt != req.Text {
+			t.Fatalf("generated prompt=%q", r.Prompt)
+		}
+		if generations == 1 {
+			return hatch.GenerateResult{}, errors.New("synthetic initial failure")
+		}
+		return hatch.GenerateResult{Text: "retry succeeded"}, nil
+	})
+	if _, err := h.Chat(ctx, req, nil); err == nil {
+		t.Fatal("initial generation should fail")
+	}
+
+	var sends int
+	previousTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previousTransport })
+	http.DefaultTransport = telegramTestTransport(func(r *http.Request) (*http.Response, error) {
+		if !strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			return nil, errors.New("unexpected Bot API method")
+		}
+		if err := r.ParseForm(); err != nil || r.Form.Get("text") != "retry succeeded" {
+			t.Fatalf("sendMessage text=%q err=%v", r.Form.Get("text"), err)
+		}
+		sends++
+		status, body := http.StatusOK, `{"ok":true,"result":{"message_id":100}}`
+		if sends == 1 {
+			status, body = http.StatusBadGateway, `{"ok":false}`
+		}
+		return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+	})
+	ch, err := telegram.New(map[string]any{"telegram.token": "123:synthetic", "telegram.mode": "webhook"}, h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliver := func(payload string, want int) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		ch.WebhookHandler().ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/telegram/webhook", strings.NewReader(payload)))
+		if w.Code != want {
+			t.Fatalf("Webhook status=%d, want %d", w.Code, want)
+		}
+	}
+	const first = `{"update_id":91,"message":{"message_id":9,"from":{"id":12},"chat":{"id":4242},"text":"/retry"}}`
+	deliver(first, http.StatusInternalServerError)
+	deliver(first, http.StatusNoContent)
+	deliver(first, http.StatusNoContent)
+	if generations != 2 || sends != 2 {
+		t.Fatalf("redelivery: generations=%d, sends=%d", generations, sends)
+	}
+	var history sessionRecordForTest
+	if err := db.Get(ctx, "session", session, &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Messages) != 2 || history.Messages[0].Content != req.Text || history.Messages[1].Content != "retry succeeded" {
+		t.Fatalf("unexpected retry history: %#v", history.Messages)
+	}
+	const next = `{"update_id":92,"message":{"message_id":10,"from":{"id":12},"chat":{"id":4242},"text":"/retry"}}`
+	deliver(next, http.StatusNoContent)
+	if generations != 3 || sends != 3 {
+		t.Fatalf("different message: generations=%d, sends=%d", generations, sends)
 	}
 }
 

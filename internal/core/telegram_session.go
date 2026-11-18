@@ -74,13 +74,25 @@ func (s *Service) TelegramSession(ctx context.Context, chatID, userID int64) (st
 }
 
 func (s *Service) migrateLegacyTelegramSession(ctx context.Context, pointer telegramSessionRecord) error {
+	// sessions.reset holds sessionsMu while it invalidates Telegram side state
+	// and deletes the history row. Serialize the complete read/check/write
+	// migration with that critical section so a history read cannot be written
+	// back after reset has deleted it.
+	// Lock order here is telegramSessionMu (held by TelegramSession) ->
+	// sessionsMu. sessions.reset never acquires telegramSessionMu.
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+
 	legacyID := telegramSessionID(pointer.ChatID)
 	if pointer.SessionID != legacyID {
 		return nil
 	}
 	var legacy sessionRecord
 	if err := s.db.Get(ctx, "session", legacyID, &legacy); err != nil {
-		return nil
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
 	}
 	if legacy.Platform != "telegram" || legacy.UserID == strconv.FormatInt(pointer.ChatID, 10) {
 		return nil
