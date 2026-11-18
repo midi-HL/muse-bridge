@@ -228,7 +228,7 @@ func (s *Service) testNode(ctx context.Context, id string) (nodeRecord, error) {
 	}
 	io.CopyN(io.Discard, resp.Body, 4096)
 	resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusProxyAuthRequired {
 		return s.recordNodeTest(ctx, id, item, "node credentials were rejected", "error", latency)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
@@ -283,6 +283,9 @@ func socks5DialContext(proxyURL *url.URL) (func(context.Context, string, string)
 		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(proxyURL.Hostname(), proxyURL.Port()))
 		if err != nil {
 			return nil, errors.New("node proxy connection failed")
+		}
+		if deadline, ok := ctx.Deadline(); ok {
+			_ = conn.SetDeadline(deadline)
 		}
 		ok := false
 		defer func() {

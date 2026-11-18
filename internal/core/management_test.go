@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 )
 
 func TestManagementActionsPersistAndMask(t *testing.T) {

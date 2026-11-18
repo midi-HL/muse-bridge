@@ -117,7 +117,11 @@ func stickerSetName(raw string) (string, error) {
 		return "", errors.New("telegram: sticker set URL is invalid")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host != "t.me" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Scheme != "https" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("telegram: sticker set URL is invalid")
+	}
+	host := strings.ToLower(u.Hostname())
+	if u.Port() != "" || (host != "t.me" && host != "telegram.me") {
 		return "", errors.New("telegram: sticker set URL is invalid")
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
@@ -143,7 +147,8 @@ func ImportStickerSet(token, rawURL string, h *http.Client) ([]StickerAsset, err
 }
 
 // ImportStickerSetContext retrieves metadata and preserves per-item failures for
-// callers such as the core action that need an import report.
+// callers such as the core action that need an import report. It does not fetch
+// sticker bytes, so no local file path is created or trusted from the response.
 func ImportStickerSetContext(ctx context.Context, token, rawURL string, h *http.Client) (StickerImportReport, error) {
 	name, err := stickerSetName(rawURL)
 	if err != nil {

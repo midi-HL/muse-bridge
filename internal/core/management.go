@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,7 +100,7 @@ func textArg(args map[string]any, key string, required bool, max int) (string, e
 
 func proxyURL(raw string) error {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" || u.User == nil && u.Hostname() == "" {
+	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" {
 		return errors.New("proxy URL is invalid")
 	}
 	switch strings.ToLower(u.Scheme) {
@@ -107,8 +108,18 @@ func proxyURL(raw string) error {
 	default:
 		return errors.New("proxy URL scheme is unsupported")
 	}
-	if u.Fragment != "" || strings.ContainsAny(raw, "\x00\r\n") {
+	if u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" || strings.ContainsAny(raw, "\x00\r\n") {
 		return errors.New("proxy URL is invalid")
+	}
+	portText := u.Port()
+	if (u.Scheme == "socks5" || u.Scheme == "socks5h") && portText == "" {
+		return errors.New("proxy URL is invalid")
+	}
+	if portText != "" {
+		port, err := strconv.Atoi(portText)
+		if err != nil || port < 1 || port > 65535 {
+			return errors.New("proxy URL is invalid")
+		}
 	}
 	return nil
 }

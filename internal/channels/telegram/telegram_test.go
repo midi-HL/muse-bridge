@@ -20,6 +20,8 @@ func TestImportStickerSetRejectsUnsafeURLs(t *testing.T) {
 		"https://t.me/addstickers/demo?token=secret",
 		"https://t.me/addstickers/demo/extra",
 		"https://t.me/addstickers/demo%2Fsecret",
+		"https://t.me.evil.example/addstickers/demo",
+		"https://t.me:443/addstickers/demo",
 	} {
 		if _, err := ImportStickerSetContext(context.Background(), "123:secret", raw, nil); err == nil {
 			t.Fatalf("unsafe URL accepted: %q", raw)
