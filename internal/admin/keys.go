@@ -90,12 +90,20 @@ func (k *Keys) Action(ctx context.Context, name string, args map[string]any) (an
 		if name == "keys.revoke" {
 			item.Revoked = true
 		} else {
-			rpm, daily, e := keyLimits(args)
-			if e != nil {
-				return nil, e
+			if _, hasRPM := args["rpm"]; hasRPM {
+				rpm, _, e := keyLimits(map[string]any{"rpm": args["rpm"], "daily": float64(item.Daily)})
+				if e != nil {
+					return nil, e
+				}
+				item.RPM = rpm
 			}
-			item.RPM = rpm
-			item.Daily = daily
+			if _, hasDaily := args["daily"]; hasDaily {
+				_, daily, e := keyLimits(map[string]any{"rpm": float64(item.RPM), "daily": args["daily"]})
+				if e != nil {
+					return nil, e
+				}
+				item.Daily = daily
+			}
 		}
 		return item, k.db.Put(ctx, "api_key", id, item, nil)
 	}

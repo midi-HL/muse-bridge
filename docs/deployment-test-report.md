@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.23` 已由 GitHub Actions 成功生成，七个平台构建和 SHA-256 校验均通过；包含 Telegram 流式单消息编辑、占位状态、UTF-16 长消息拆分和失败清理。此前 `v0.1.0` 至 `v0.1.22` Release 已成功生成。
+- Release：`v0.1.24` 将包含 API key 部分限额更新保持未指定字段、密钥管理回归测试；GitHub Actions 七平台构建与 SHA-256 校验由 Release workflow 负责。此前 `v0.1.0` 至 `v0.1.23` Release 已成功生成。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
