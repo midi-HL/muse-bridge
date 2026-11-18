@@ -2,7 +2,7 @@
 
 ## 版本与环境
 
-- 最新已发布稳定版：v0.1.30，包含 Telegram session/retry 修复及新生成 file ID 跨架构兼容修复；本报告后续列出的“旧 file ID 读取兼容”是额外待发补丁。
+- 最新稳定版为 [v0.1.31](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.31)，包含 Telegram 轮询和回执修复，以及旧文件 ID 兼容修复。
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
@@ -24,12 +24,15 @@
 - 最新本地 `go vet`、全库 tests、Node 12 项和纯 Go build 通过。最终独立 review agent 异常中止；定向 reviewer 曾复核 webhooks filter-before-bind pass，最终整体独立 verdict 不可得，不声称完整独立 review pass。真实 Telegram Bot token 未提供，无外部 E2E。
 
 
-## Telegram 轮询、回执与旧文件 ID 兼容补丁（待发布）
+## v0.1.31 Telegram 轮询、回执与旧文件 ID 兼容补丁
 
 - 轮询保留运行被关闭时尚未确认的更新，运行内的重复投递会跳过已处理的更新。会话绑定或短命令失败只自动重试一次，避免永久钉住确认位置。非文本更新在会话绑定前忽略。
 - 模拟 Telegram Bot API 的 Webhook 测试先让 `/retry` 回执发送失败，再重推同一更新，验证补发成功、再次重推跳过发送、原重试只生成一次，另一条 `/retry` 仍可独立执行。外部 Telegram 回执与本地落库之间仍有失败窗口，分段发送中途失败也可能导致重复分段。
 - 会话迁移与重置共用会话锁，回执发送期间重置会返回冲突。导入在写入前验证 Telegram 记录类型与身份，兼容缺少 sender 的历史记录。v0.1.30 会拒绝 `_` 或 `-` 开头的旧文件 ID。直接读取与备份导入回归验证了旧 ID 兼容，文件所有权与目录约束继续生效。
-- 本补丁的正式发布证据待补录。
+- 源码提交 `5f167f0542fa65711385f6653936b8877ba207f4` 通过本地 Go 全量测试、`go vet`、12 项前端测试、纯 Go 构建及 Windows/386 文件兼容回归。同一提交的格式、单元测试、竞态检测、漏洞扫描与构建均通过。Windows amd64、386、arm64 和 Linux amd64、386、arm64、ARMv7 共七个平台构建并发布成功。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44416207174) · [Release 工作流](https://github.com/midi-HL/muse-bridge/actions/runs/44416410097)
+- 独立复审确认自动重试上限、绑定前过滤非消息更新、兼容零值发送者三项修复闭合。旧文件 ID 兼容修复也通过了独立定向复审。
+- 正式 Windows amd64 产物的 SHA-256 为 `cdc92a63fde10af200e4c70d09d4fdbb6167403370e8c3edfbf938ca3fac0704`，与独立校验文件和 `SHA256SUMS` 一致。以该产物在隔离目录启动，首次设密、管理 Schema、密钥脱敏、API key 认证、缺失文件返回 404 和嵌入式 WebUI 的 HTTP 响应均通过。[Windows amd64 下载](https://github.com/midi-HL/muse-bridge/releases/download/v0.1.31/muse-bridge-windows-amd64.exe)
+- 真实 Telegram Bot、Muse 生成、外部 ASR 与浏览器视觉走查仍待验收。
 
 ## v0.1.27 运行时配置修复（已发布）
 
