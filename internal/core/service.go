@@ -173,6 +173,7 @@ func (s *Service) Schema() map[string]any {
 	return map[string]any{"settings": append([]config.Field(nil), config.Fields...), "operations": []string{
 		"state", "schema", "settings", "settings.update", "log",
 		"accounts", "accounts.list", "accounts.import", "accounts.update", "accounts.delete", "accounts.probe",
+		"protocol.probe", "protocol.tasks", "protocol.threads",
 		"nodes.save", "nodes.delete", "nodes.test", "nodes.probe",
 		"personas.save", "personas.delete",
 		"schedules.save", "schedules.delete",
@@ -358,6 +359,8 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 	case "accounts.probe", "account.probe":
 		id, _ := args["id"].(string)
 		return s.pool.Probe(ctx, id)
+	case "protocol.probe":
+		return s.protocolProbe(ctx, args)
 	case "nodes.save":
 		return s.saveNode(ctx, args)
 	case "nodes.delete":
