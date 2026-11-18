@@ -13,7 +13,9 @@ export function createChat(ctx) {
   function attachmentView(attachment) { const label=attachment.filename || t('generatedFile');const link=attachment.id?el('a',{class:'file-result',href:`/admin/api/files/${encodeURIComponent(attachment.id)}`,download:label},icon('download'),label):el('span',{class:'file-result'},icon('file'),label); return link; }
   let streamList, input, sendButton, stopButton, modelSelect, attachInput, attachmentPreview, status;
   function renderMessages(){streamList.replaceChildren(...messages.map(bubble));streamList.scrollTop=streamList.scrollHeight;}
-  async function loadHistory(idValue) { if (!idValue)return; try { const data=await action('sessions.history',{id:idValue}); messages=(data?.messages || []).map(m=>({...m,text:textOf(m),time:m.time || m.created_at}));sessionId=idValue;renderMessages(); } catch(error){ctx.notify(error.message,true); } }
+  let historyRequest=0;
+  async function loadHistory(idValue, quiet=false) { if (!idValue)return; const requestId=++historyRequest; try { const data=await action('sessions.history',{id:idValue}); if(requestId!==historyRequest||idValue!==sessionId||sending)return; const incoming=(data?.messages || []).map(m=>({...m,text:textOf(m),time:m.time || m.created_at})); const key=m=>`${m.role||''}\u0000${m.text||''}`; if(incoming.length!==messages.length||incoming.some((m,i)=>key(m)!==key(messages[i]))){messages=incoming;renderMessages();} } catch(error){if(!quiet)ctx.notify(error.message,true);} }
+  function refreshHistory(){if(sessionId&&!sending)loadHistory(sessionId,true);}
   async function chooseSession(session) { if(sending){ctx.notify(t('cancelGeneration'),true);return;} sessionId=session?.id || '';sessionTitle=session?.title || '';messages=[];ctx.chatSessionId=sessionId;ctx.navigate('chat');await loadHistory(sessionId); }
   function newChat(){if(sending){ctx.notify(t('cancelGeneration'),true);return;}sessionId=id();sessionTitle='';ctx.chatSessionId=sessionId;messages=[];renderMessages();input?.focus();}
   function setSending(value) { sending=value;sendButton.disabled=value;stopButton.hidden=!value;input.disabled=value;attachInput.disabled=value;modelSelect.disabled=value; }
@@ -36,6 +38,6 @@ export function createChat(ctx) {
     if(messages.length)intro.hidden=true;
     return el('div',{class:'chat-layout'},el('div',{class:'chat-topbar'},el('div',{},el('span',{class:'eyebrow'},t('chat')),el('h1',{},sessionTitle || t('newChat'))),el('div',{class:'top-actions'},modelSelect.cloneNode(true),button(t('newChat'),newChat,'secondary','plus'),button(t('export'),exportChat,'quiet','download'))),intro,streamList,composer);
   }
-  const page={render(){const node=build();streamList=node.querySelector('.message-list');const clonedModel=node.querySelector('.chat-topbar select');if(clonedModel){clonedModel.value=model;clonedModel.addEventListener('change',e=>model=e.target.value);}renderMessages();if(ctx.chatSessionId && ctx.chatSessionId!==sessionId)loadHistory(ctx.chatSessionId);return node;},newChat,chooseSession,stop,isSending:()=>sending};
+  const page={render(){const node=build();streamList=node.querySelector('.message-list');const clonedModel=node.querySelector('.chat-topbar select');if(clonedModel){clonedModel.value=model;clonedModel.addEventListener('change',e=>model=e.target.value);}renderMessages();if(ctx.chatSessionId && ctx.chatSessionId!==sessionId)loadHistory(ctx.chatSessionId);return node;},newChat,chooseSession,stop,refreshHistory,isSending:()=>sending};
   return page;
 }

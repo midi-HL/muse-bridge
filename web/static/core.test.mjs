@@ -20,6 +20,15 @@ test('coerceField validates bounded integers, choices and JSON', () => {
   assert.throws(() => coerceField({type:'object'}, '[]'));
 });
 
+test('scheduled message refresh contract is present', async () => {
+  const app = await (await import('node:fs/promises')).readFile(new URL('./app.js', import.meta.url), 'utf8');
+  const chat = await (await import('node:fs/promises')).readFile(new URL('./chat.js', import.meta.url), 'utf8');
+  assert.match(app, /page==='sessions'/);
+  assert.match(app, /chat\?\.refreshHistory/);
+  assert.match(chat, /function refreshHistory/);
+  assert.match(chat, /sessions\.history/);
+});
+
 test('redact masks sensitive fields while retaining configured status', () => {
   assert.deepEqual(redact({token:{configured:true,masked:'••••'}, note:'visible'}), {token:{configured:true,masked:'••••'},note:'visible'});
   assert.deepEqual(redact({api_key:'plaintext'}), {api_key:'••••••••'});

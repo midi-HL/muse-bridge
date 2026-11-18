@@ -22,6 +22,7 @@ function renderNavigation(){nav.replaceChildren(...navGroups.map(group=>el('div'
 function navigate(page){if(!navItems().some(([key])=>key===page))page='overview';if(ctx.page===page){mobileMenu?.classList.remove('open');return;}if(chat && ctx.page==='chat' && chat.isSending?.()){notify(t('cancelGeneration'),true);return;}ctx.page=page;pages.resetFilters();renderShell();mobileMenu?.classList.remove('open');}
 function renderShell(){title.textContent=titleFor(ctx.page);subtitle.textContent=t(`${ctx.page}Desc`);renderNavigation();renderContent();}
 function renderContent(){if(!content)return;content.replaceChildren(ctx.page==='chat'?chat.render():pages.render(ctx.page));}
+function refreshPagePeriodically(){ if(ctx.page==='logs'||ctx.page==='overview'||ctx.page==='sessions') refresh().catch(()=>{}); chat?.refreshHistory?.(); }
 function openChat(session){ctx.chatSessionId=session?.id || '';navigate('chat');}
 function makeShell(){
   root.replaceChildren();
@@ -45,6 +46,6 @@ function authForm(mode){
   box.append(form,el('div',{class:'auth-foot'},el('span',{},t('localFirst')),button(language==='zh'?'EN':'中文',()=>{setLanguage(language==='zh'?'en':'zh');showAuth();},'quiet')));return el('main',{class:'auth-page'},box);
 }
 function showAuth(){clearInterval(refreshTimer);if(!root)return;const mode=appState.auth?.setup_required?'setup':'login';root.replaceChildren(authForm(mode));}
-async function loadApp(){try{await refresh(false);makeShell();clearInterval(refreshTimer);refreshTimer=setInterval(()=>{if(ctx.page==='logs'||ctx.page==='overview')refresh().catch(()=>{});},15000);}catch(error){handleError(error);}}
+async function loadApp(){try{await refresh(false);makeShell();clearInterval(refreshTimer);refreshTimer=setInterval(refreshPagePeriodically,10000);}catch(error){handleError(error);}}
 async function boot(){setTheme(localStorage.getItem('muse.theme') || 'system');root=document.getElementById('app');ctx={page:'overview',schema:appState.schema,state:appState.state,autoRefresh:true,chatSessionId:'',navigate,refresh,renderContent,notify,handleError,openChat};pages=createPages(ctx);chat=createChat(ctx);try{const auth=await request('/auth/status');appState.auth=auth;if(auth.csrf_token)setCSRF(auth.csrf_token);if(!auth.authenticated){showAuth();return;}await loadApp();}catch(error){showAuth();notify(error.message,true);}}
 boot();
