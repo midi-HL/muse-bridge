@@ -76,7 +76,7 @@ func (s *Service) importedFileName(rec fileRecord, id string) (string, error) {
 }
 
 func validFileID(id string) bool {
-	if id == "" || len(id) > 128 {
+	if id == "" || len(id) > 128 || !managedID.MatchString(id) {
 		return false
 	}
 	for _, r := range id {
@@ -173,7 +173,7 @@ func generatedDisplayName(name string) string {
 }
 
 func (s *Service) storeGeneratedFile(ctx context.Context, name, mime string, data []byte, platform, userID string) (File, error) {
-	id := secure.ID()
+	id := "f_" + secure.ID()
 	// Only the opaque ID is used on disk, so reserved names, ADS suffixes and
 	// hostile remote filenames cannot affect filesystem operations.
 	filename := id + ".bin"

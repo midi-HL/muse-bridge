@@ -8,13 +8,15 @@
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
-## v0.1.28 Telegram 会话可靠性修复（待同提交 CI/Release）
+## v0.1.29 Telegram 会话可靠性修复（Release 构建中）
 
 - Telegram `/new` 指针数据库为唯一来源并串行更新；旧群聊历史迁移时保留原创建者授权并改为 chat owner。
 - retry 改用每 sender attempt ID 快照，过期快照拒绝；重复文本不会覆盖之前成功回合，失败/取消不写历史。`sessions.reset` 失效 retry 和命令缓存。
 - core lease 扫描停止同 chat 的所有活跃 session；有界 polling worker 使生成中 `/stop` 可处理。重复 Webhook command 结果按 chat/message key 持久化。取消生成会尝试用独立短 context 删除空 placeholder。
 - 群组 `/cmd@bot` 可选 `telegram.bot_username` 目标校验；目标不匹配忽略，无目标命令保持可用。
-- 本轮测试和本地验证通过；独立最终 review 会话异常中止，因此明确不声称有独立 review pass。CI、race/govulncheck 和正式 Release/Windows artifact 待提交后验证。
+- 本轮本地完整 Go tests/vet/CGO-free build/Node 12 项与 HTTP 冒烟通过。CI [44382769650](https://github.com/midi-HL/muse-bridge/actions/runs/44382769650) 对应提交 `7972113c2afedb6dc946caa17af317b4d233524b`；format、前端测试、vet、unit、race、govulncheck、build 全通过。
+- 后续 v0.1.29 Release 的 Windows/386 单测发现文件备份间歇失败。复现 2/100 次，根因是 `secure.ID()` 的 URL-base64 首字符偶尔不满足 backup `managedID` 的字母数字首字符契约；文件 ID 已加字母前缀，并经 50 次 Windows 386 定向回归通过。v0.1.29 Release run 44383122694 因该失败未发布，修复已并入当前待发 patch。
+- 独立复审的整轮 Telegram reviewer 因工具会话异常未形成最终 verdict；可取得的只读审查 findings 均已按复现修复，目标过滤修复另有定向审查 pass。没有真实 Bot token，未运行外部 Telegram E2E。
 
 ## v0.1.27 运行时配置修复（已发布）
 

@@ -41,6 +41,11 @@
 - 下载测试先复现未知/虚报 Content-Length 超限仍返回成功、流读取失败返回部分数据、错误携带 URL、DNS 不受总期限约束、继承环境代理等问题。修复后实际字节限制、取消、地址固定、重定向拒绝及资源关闭用例通过。
 - 备份中合法旧绝对路径与新相对路径均覆盖测试；备份不含媒体字节，缺少字节的记录保持不可下载。独立审查指出跨数据目录旧备份迁移被拒，新增失败用例后修复为仅按受限旧文件布局取 basename 重定位到当前根目录，不访问旧路径；复验通过。此处未声称备份所有业务类型都具备完整事务隔离。
 
+## v0.1.29 Windows 386 Release 回归
+
+- Release run 44383122694 的 Windows/386 `TestRelativeFileBackupRemainsPortableWithSeparateBytes` 失败。定向 stress `go test ./internal/core -run TestRelativeFileBackupRemainsPortableWithSeparateBytes -count=100` 重现 2 次失败；根因是 `secure.ID()` 返回 RawURL Base64，可 `_` 或 `-` 开头，而 `managedID` 仅允许字母数字首位，合法文件备份偶发被拒。
+- 新生成 file ID 统一加 `f_` 前缀，并在 `validFileID` 应用 managedID 验证。Windows 本机 386 目标的该测试 50 次通过；全量本地验证随后通过。下一次同提交 Release CI 仍需复核。
+
 ## v0.1.28 Telegram 会话、重试和轮询修复
 
 - `/new` 指针由数据库作为唯一来源并按 chat 串行写入；旧 `telegram_<chatID>` 群聊首次访问时迁移历史 owner 到 chat ID，同时保留原创建者用于人设授权。
