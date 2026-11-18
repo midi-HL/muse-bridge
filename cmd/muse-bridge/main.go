@@ -94,7 +94,7 @@ func serve(ctx context.Context, args []string) error {
 	}
 	keys := admin.NewKeys(db, redactor)
 	keys.Timezone = func() string { v, _ := service.Settings()["general.timezone"].(string); return v }
-	handler := httpapi.New(httpapi.Options{Auth: auth, Keys: keys, Backend: service, LoopbackOnly: loopback, SetupTokenRequired: os.Getenv("MUSE_SETUP_TOKEN") != ""})
+	handler := httpapi.New(httpapi.Options{Auth: auth, Keys: keys, Backend: service, LoopbackOnly: loopback, SetupTokenRequired: os.Getenv("MUSE_SETUP_TOKEN") != "", TelegramWebhook: telegramRuntime.webhookHandler(), TelegramSecret: telegramRuntime.webhookSecret})
 	server := httpapi.HTTPServer(*addr, handler)
 	server.BaseContext = func(net.Listener) context.Context { return context.Background() }
 	listener, e := net.Listen("tcp", *addr)

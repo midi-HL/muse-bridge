@@ -37,7 +37,26 @@ type Options struct {
 	Backend            Backend
 	LoopbackOnly       bool
 	SetupTokenRequired bool
+	TelegramWebhook    http.Handler
+	TelegramSecret     func() string
 }
+type telegramWebhookGuard struct {
+	next   http.Handler
+	secret func() string
+}
+
+func (g telegramWebhookGuard) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	want := ""
+	if g.secret != nil {
+		want = g.secret()
+	}
+	if want == "" || subtle.ConstantTimeCompare([]byte(want), []byte(r.Header.Get("X-Telegram-Bot-Api-Secret-Token"))) != 1 {
+		failure(w, http.StatusForbidden, "forbidden", "Telegram webhook verification failed")
+		return
+	}
+	g.next.ServeHTTP(w, r)
+}
+
 type Server struct {
 	auth               *admin.Auth
 	keys               *admin.Keys
@@ -49,6 +68,9 @@ type Server struct {
 
 func New(o Options) *Server {
 	s := &Server{auth: o.Auth, keys: o.Keys, backend: o.Backend, loopbackOnly: o.LoopbackOnly, setupTokenRequired: o.SetupTokenRequired, mux: http.NewServeMux()}
+	if o.TelegramWebhook != nil {
+		s.mux.Handle("/telegram/webhook", telegramWebhookGuard{o.TelegramWebhook, o.TelegramSecret})
+	}
 	s.mux.HandleFunc("/admin/api/auth/status", s.authStatus)
 	s.mux.HandleFunc("/admin/api/auth/setup", s.authSetup)
 	s.mux.HandleFunc("/admin/api/auth/login", s.authLogin)

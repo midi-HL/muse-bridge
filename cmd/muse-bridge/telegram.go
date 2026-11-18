@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/core"
@@ -15,12 +18,16 @@ import (
 type telegramServiceHandler struct{ service *core.Service }
 
 type telegramRuntime struct {
-	mu      sync.Mutex
-	parent  context.Context
-	cancel  context.CancelFunc
-	ch      *telegram.Channel
-	service *core.Service
-	handler telegram.Handler
+	mu         sync.Mutex
+	parent     context.Context
+	cancel     context.CancelFunc
+	ch         *telegram.Channel
+	service    *core.Service
+	handler    telegram.Handler
+	secret     string
+	mode       string
+	webhookURL string
+	started    bool
 }
 
 func (h telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
@@ -73,6 +80,8 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	token, _ := values["telegram.token"].(string)
+	mode, _ := values["telegram.mode"].(string)
+	secret, _ := values["telegram.webhook_secret"].(string)
 	if strings.TrimSpace(token) == "" {
 		if r.cancel != nil {
 			r.cancel()
@@ -97,11 +106,46 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 		return err
 	}
 	r.ch = ch
+	r.secret = secret
+	r.mode = mode
+	r.webhookURL, _ = values["telegram.webhook_url"].(string)
+	if mode == "webhook" {
+		if strings.TrimSpace(r.webhookURL) == "" {
+			return errors.New("telegram: webhook mode requires telegram.webhook_url")
+		}
+		return r.registerWebhookLocked()
+	}
 	pollCtx, cancel := context.WithCancel(r.parent)
 	r.cancel = cancel
 	go func() { _ = ch.Run(pollCtx) }()
 	return nil
 }
+
+func (r *telegramRuntime) registerWebhookLocked() error {
+	if r.ch == nil {
+		return errors.New("telegram: channel is not initialized")
+	}
+	if strings.TrimSpace(r.webhookURL) == "" {
+		return errors.New("telegram: webhook URL is required")
+	}
+	ctx, cancel := context.WithTimeout(r.parent, 15*time.Second)
+	defer cancel()
+	return r.ch.Client().SetWebhook(ctx, r.webhookURL, r.secret)
+}
+
+func (r *telegramRuntime) webhookHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		r.mu.Lock()
+		ch := r.ch
+		r.mu.Unlock()
+		if ch == nil {
+			http.NotFound(w, req)
+			return
+		}
+		ch.WebhookHandler().ServeHTTP(w, req)
+	})
+}
+func (r *telegramRuntime) webhookSecret() string { r.mu.Lock(); defer r.mu.Unlock(); return r.secret }
 
 func (r *telegramRuntime) close() error {
 	r.mu.Lock()

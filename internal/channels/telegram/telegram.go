@@ -250,6 +250,26 @@ func (c *Client) Edit(ctx context.Context, chat int64, id int, text string) erro
 	_, e := c.call(ctx, "editMessageText", url.Values{"chat_id": {strconv.FormatInt(chat, 10)}, "message_id": {strconv.Itoa(id)}, "text": {text}})
 	return e
 }
+
+// SetWebhook registers Telegram's HTTPS callback. The secret is sent only in
+// Telegram's API request and is never included in errors or logs.
+func (c *Client) SetWebhook(ctx context.Context, endpoint, secret string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Fragment != "" {
+		return errors.New("telegram: webhook URL must be an HTTPS URL")
+	}
+	values := url.Values{"url": {endpoint}}
+	if secret != "" {
+		values.Set("secret_token", secret)
+	}
+	_, err = c.call(ctx, "setWebhook", values)
+	return err
+}
+
+func (c *Client) DeleteWebhook(ctx context.Context) error {
+	_, err := c.call(ctx, "deleteWebhook", url.Values{})
+	return err
+}
 func Split(s string, max int) []string {
 	if max < 1 {
 		max = 4096
