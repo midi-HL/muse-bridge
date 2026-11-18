@@ -2,21 +2,26 @@
 
 ## 版本与环境
 
+- 最新已发布稳定版：v0.1.30，含跨架构生成物 ID 修复；其 Telegram `/new`/`/retry` 可靠性工作仍在未发布工作树内。
+
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
 - 本轮文件安全补丁：`v0.1.26`，源码提交 `d6cd64e44d55ad13a845a202a7998c828658bd6f`。CI [44242271552](https://github.com/midi-HL/muse-bridge/actions/runs/44242271552) 的格式、vet、单元测试、race、漏洞检查、构建全部通过；Release [44242561924](https://github.com/midi-HL/muse-bridge/actions/runs/44242561924) 七平台及发布通过。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
-## v0.1.29 Telegram 会话可靠性修复（Release 构建中）
+## v0.1.30 跨架构备份 ID 修复（已发布）
 
-- Telegram `/new` 指针数据库为唯一来源并串行更新；旧群聊历史迁移时保留原创建者授权并改为 chat owner。
-- retry 改用每 sender attempt ID 快照，过期快照拒绝；重复文本不会覆盖之前成功回合，失败/取消不写历史。`sessions.reset` 失效 retry 和命令缓存。
-- core lease 扫描停止同 chat 的所有活跃 session；有界 polling worker 使生成中 `/stop` 可处理。重复 Webhook command 结果按 chat/message key 持久化。取消生成会尝试用独立短 context 删除空 placeholder。
-- 群组 `/cmd@bot` 可选 `telegram.bot_username` 目标校验；目标不匹配忽略，无目标命令保持可用。
-- 本轮本地完整 Go tests/vet/CGO-free build/Node 12 项与 HTTP 冒烟通过。CI [44382769650](https://github.com/midi-HL/muse-bridge/actions/runs/44382769650) 对应提交 `7972113c2afedb6dc946caa17af317b4d233524b`；format、前端测试、vet、unit、race、govulncheck、build 全通过。
-- 后续 v0.1.29 Release 的 Windows/386 单测发现文件备份间歇失败。复现 2/100 次，根因是 `secure.ID()` 的 URL-base64 首字符偶尔不满足 backup `managedID` 的字母数字首字符契约；文件 ID 已加字母前缀，并经 50 次 Windows 386 定向回归通过。v0.1.29 Release run 44383122694 因该失败未发布，修复已并入当前待发 patch。
-- 独立复审的整轮 Telegram reviewer 因工具会话异常未形成最终 verdict；可取得的只读审查 findings 均已按复现修复，目标过滤修复另有定向审查 pass。没有真实 Bot token，未运行外部 Telegram E2E。
+- v0.1.29 Windows/386 单测曾间歇失败（stress 复现 2/100）：RawURL Base64 `secure.ID()` 偶发 `_`/`-` 开头，不满足 backup `managedID` 的首字符契约。新生成 file ID 加固定安全前缀；Windows/386 定向回归 50 次通过。
+- CI [44385505102](https://github.com/midi-HL/muse-bridge/actions/runs/44385505102) 对提交 `fab3b91d8fc277b8cc53064c3e7ea9070346cf7e` 的 format/web/vet/unit/race/govulncheck/build 全过。Release [44385833238](https://github.com/midi-HL/muse-bridge/actions/runs/44385833238) 七平台 build/publish 全过。
+- Windows amd64 正式产物 sidecar 和 `SHA256SUMS` 双校验通过，SHA-256 `bf47a335c139e58c7ee5550aeef3e34251227ba90bd501e5761fb48b6dd36cd9`，HTTP smoke 通过。Telegram 外部 Bot E2E 未执行。
+
+## 当前未发布 Telegram 会话修复（本地已验证）
+
+- `/new` pointer/旧群聊迁移/retry attempt ID/失败历史不污染、reset 清理、webhook command 幂等、bounded polling `/stop`、target bot preflight 和 update-session binding 已加入当前工作树。
+- 两项修复后审查发现的 finding（reset tombstone 写回竞态、白名单过滤前绑定会话）均已复现并修复；Webhook bind-before-state 的定向审查通过。完整独立终审会话异常中止，最终整体 review verdict 不可得，不声称完整独立审查通过。
+- 本地完整 Go/vet/build、Node 12 项及 diff check 通过；最近修复后的 exact commit 尚未提交，尚无对应 CI 或 Release，因此不能称其已发布。
+
 
 ## v0.1.27 运行时配置修复（已发布）
 

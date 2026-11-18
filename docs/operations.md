@@ -42,7 +42,7 @@
 - CLI：`chat --persona ID` 或 `--persona _none`；临时 `--cookie` 模式没有服务端预设库，会拒绝同时指定保存的人设。OpenAI 请求可添加 `persona_id`；管理员 action `sessions.persona` 使用 `id` 和 `persona_id`。Telegram 使用 `/persona` 查看、`/persona ID` 切换、`/persona none` 关闭。
 - Telegram `/new` 会为当前 chat 持久化新的会话指针；聊天、`/stop`、`/persona` 和 `/retry` 使用该指针，重启后恢复。`/retry` 重用该发送者最近一次通过 core 会话租约的尝试，并携带不可复用的 attempt ID；新请求会使排队中的旧 retry 失效。首次生成失败也可重试；每次 retry 是新尝试、追加独立 turn，不会按相同文本覆写其他成功答复；失败不污染历史。
 - retry 记录按 sender ID 隔离。同一 Webhook command 的 `(chat_id,message_id)` 结果持久化，重复投递复用缓存结果、不重复生成。`sessions.reset` 会清除 retry 记录与缓存 command answer；命令完成写回与 reset 共享互斥区，不能用旧结果覆盖失效标记；与正在执行的 core chat 冲突时拒绝 reset。
-- Telegram pointer、retry 和 command 状态纳入加密备份导入/导出。旧版本 `telegram_<chatID>` 群聊历史首次访问时保留旧创建者标识，并将历史 owner 迁移为 chat owner，避免升级后丢失上下文。
+- Telegram pointer、retry 和 command 状态纳入加密备份导入/导出。旧版本 `telegram_<chatID>` 群聊历史首次访问时保留旧创建者标识，并将历史 owner 迁移为 chat owner，避免升级后丢失上下文。Webhook 和长轮询均在白名单/目标预检后、发送状态占位或提交异步队列前绑定会话，避免 `/new` 竞态；普通重试按 attempt ID 验证，重复 webhook command 回执按 `(chat_id,message_id)` 幂等。
 - 长轮询对普通生成采用有界后台分派；每条更新在排队/发送占位消息前绑定会话指针，后续 `/new` 不会把已接收消息改投到新会话。忙碌或队列满时回复明确提示、要求发送者重试；控制命令独立处理，`/stop` 会取消该 chat 所有已注册 core lease；生成取消会清理未显示内容的 Telegram 占位消息。更新写入服务前遵循 polling offset 处理，外部 E2E 未运行。
 - 人设是尽力引导，不替换 Muse 内置提示词。前端测试覆盖选择、失败恢复、异步切会话和定时刷新竞态；Telegram session/retry 由 core 与 command 测试覆盖；尚未完成真实浏览器视觉走查或真实 Muse 人设服从测试。
 
