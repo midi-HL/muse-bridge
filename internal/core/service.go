@@ -246,7 +246,10 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 			return nil, err
 		}
 		if hook != nil {
-			if err := hook(publicSettings(out)); err != nil {
+			// Hooks are internal runtime adapters (Telegram reload, schedulers),
+			// not API output. They need the raw values to apply secret settings;
+			// callers still receive only the masked map below.
+			if err := hook(out); err != nil {
 				return nil, err
 			}
 		}

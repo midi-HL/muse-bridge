@@ -320,16 +320,26 @@ func New(cfg map[string]any, h Handler) (*Channel, error) {
 	return ch, nil
 }
 func (ch *Channel) Run(ctx context.Context) error {
-	if ch.mode != "polling" {
+	ch.mu.Lock()
+	mode := ch.mode
+	ch.mu.Unlock()
+	if mode != "polling" {
 		return errors.New("telegram: webhook mode requires WebhookHandler")
 	}
 	for {
+		ch.mu.Lock()
+		mode = ch.mode
+		client := ch.client
+		ch.mu.Unlock()
+		if mode != "polling" || client == nil {
+			return nil
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
-		v, e := ch.client.call(ctx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(ch.client.offset, 10)}})
+		v, e := client.call(ctx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(client.offset, 10)}})
 		if e != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -340,7 +350,11 @@ func (ch *Channel) Run(ctx context.Context) error {
 		var items []update
 		_ = json.Unmarshal(v, &items)
 		for _, u := range items {
-			ch.client.offset = u.UpdateID + 1
+			ch.mu.Lock()
+			if ch.client == client {
+				ch.client.offset = u.UpdateID + 1
+			}
+			ch.mu.Unlock()
 			_ = ch.HandleUpdate(ctx, u)
 		}
 	}
@@ -402,10 +416,14 @@ func (ch *Channel) Reload(ctx context.Context, cfg map[string]any) error {
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 	token, _ := cfg["telegram.token"].(string)
-	if token == "" {
-		return errors.New("telegram: bot token required")
+	if strings.TrimSpace(token) == "" {
+		return ErrNotConfigured
 	}
-	c, e := NewClient(token, ch.client.http)
+	var httpClient *http.Client
+	if ch.client != nil {
+		httpClient = ch.client.http
+	}
+	c, e := NewClient(token, httpClient)
 	if e != nil {
 		return e
 	}
@@ -413,6 +431,15 @@ func (ch *Channel) Reload(ctx context.Context, cfg map[string]any) error {
 	if m, ok := cfg["telegram.mode"].(string); ok {
 		ch.mode = m
 	}
+	ch.whitelist = map[int64]bool{}
+	if raw, ok := cfg["telegram.whitelist"].(string); ok {
+		for _, v := range strings.Split(raw, ",") {
+			if id, e := strconv.ParseInt(strings.TrimSpace(v), 10, 64); e == nil {
+				ch.whitelist[id] = true
+			}
+		}
+	}
+	_ = ctx
 	return nil
 }
 func (ch *Channel) Client() *Client { return ch.client }

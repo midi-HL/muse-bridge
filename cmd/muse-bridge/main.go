@@ -17,7 +17,6 @@ import (
 	_ "time/tzdata"
 
 	"github.com/midi-HL/muse-bridge/internal/admin"
-	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/cli"
 	"github.com/midi-HL/muse-bridge/internal/config"
 	"github.com/midi-HL/muse-bridge/internal/core"
@@ -83,14 +82,12 @@ func serve(ctx context.Context, args []string) error {
 		return errors.New("cannot initialize service")
 	}
 	defer service.Close()
-	var telegramChannel *telegram.Channel
-	if token, ok := values["telegram.token"].(string); ok && token != "" {
-		telegramChannel, e = startTelegram(ctx, service, values)
-		if e != nil {
-			return errors.New("cannot initialize Telegram channel")
-		}
-		defer telegramChannel.Close()
+	telegramRuntime := newTelegramRuntime(ctx, service)
+	if e := telegramRuntime.apply(values); e != nil {
+		return errors.New("cannot initialize Telegram channel")
 	}
+	defer telegramRuntime.close()
+	service.SetSettingsHook(telegramRuntime.apply)
 	auth := admin.NewAuth(db, os.Getenv("MUSE_SETUP_TOKEN"))
 	if !loopback && auth.SetupRequired(ctx) && os.Getenv("MUSE_SETUP_TOKEN") == "" {
 		return errors.New("first setup on a non-loopback listener requires MUSE_SETUP_TOKEN")

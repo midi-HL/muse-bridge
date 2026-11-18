@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/core"
@@ -11,6 +13,15 @@ import (
 )
 
 type telegramServiceHandler struct{ service *core.Service }
+
+type telegramRuntime struct {
+	mu      sync.Mutex
+	parent  context.Context
+	cancel  context.CancelFunc
+	ch      *telegram.Channel
+	service *core.Service
+	handler telegram.Handler
+}
 
 func (h telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
 	session := fmt.Sprintf("telegram_%d", r.ChatID)
@@ -54,11 +65,55 @@ func (h telegramServiceHandler) Feedback(context.Context, telegram.Request, tele
 	return nil
 }
 
-func startTelegram(ctx context.Context, service *core.Service, values map[string]any) (*telegram.Channel, error) {
-	channel, err := telegram.New(values, telegramServiceHandler{service: service})
-	if err != nil {
-		return nil, err
+func newTelegramRuntime(ctx context.Context, service *core.Service) *telegramRuntime {
+	return &telegramRuntime{parent: ctx, service: service, handler: telegramServiceHandler{service: service}}
+}
+
+func (r *telegramRuntime) apply(values map[string]any) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	token, _ := values["telegram.token"].(string)
+	if strings.TrimSpace(token) == "" {
+		if r.cancel != nil {
+			r.cancel()
+			r.cancel = nil
+		}
+		if r.ch != nil {
+			_ = r.ch.Close()
+			r.ch = nil
+		}
+		return nil
 	}
-	go func() { _ = channel.Run(ctx) }()
-	return channel, nil
+	if r.ch != nil {
+		if r.cancel != nil {
+			r.cancel()
+			r.cancel = nil
+		}
+		_ = r.ch.Close()
+		r.ch = nil
+	}
+	ch, err := telegram.New(values, r.handler)
+	if err != nil {
+		return err
+	}
+	r.ch = ch
+	pollCtx, cancel := context.WithCancel(r.parent)
+	r.cancel = cancel
+	go func() { _ = ch.Run(pollCtx) }()
+	return nil
+}
+
+func (r *telegramRuntime) close() error {
+	r.mu.Lock()
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	ch := r.ch
+	r.ch = nil
+	r.mu.Unlock()
+	if ch != nil {
+		return ch.Close()
+	}
+	return nil
 }
