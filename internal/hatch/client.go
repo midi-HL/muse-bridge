@@ -215,11 +215,21 @@ func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 		if errors.As(wakeErr, &he) && (he.Kind == "auth" || he.Kind == "rate_limit") {
 			return nil, wakeErr
 		}
-		for i := 0; i < 3; i++ {
-			if i > 0 {
-				if err = delay(ctx, time.Second); err != nil {
+		// VM wake is asynchronous. Poll for a bounded period with backoff so a
+		// slow but valid workspace is not reported pending after only two seconds.
+		pollDeadline := time.Now().Add(25 * time.Second)
+		for attempt := 0; ; attempt++ {
+			if attempt > 0 {
+				backoff := time.Duration(1<<minInt(attempt-1, 3)) * 500 * time.Millisecond
+				if backoff > 4*time.Second {
+					backoff = 4 * time.Second
+				}
+				if err = delay(ctx, backoff); err != nil {
 					return nil, err
 				}
+			}
+			if time.Now().After(pollDeadline) {
+				break
 			}
 			session, err = c.session(ctx)
 			if err != nil {
@@ -333,6 +343,13 @@ func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 	go cn.heartbeat()
 	return cn, nil
 }
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 func delay(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
