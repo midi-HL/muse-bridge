@@ -35,7 +35,7 @@
 
 - 真实 Cookie 未写入源码、日志、报告或 CI。
 - 对提供的 Cookie 做过一次隔离运行进程导入尝试，客户端侧收到泛化 400，未把它误判为 `invalid`，也未输出 Cookie。随后使用同一文件内容直接调用当前 HTTP handler 的 `httptest` 回归诊断，导入和加密入库通过。
-- 之后用当前源码构建的临时 Windows amd64 CLI 执行了一次真实 Muse 短消息请求，约 7.2 秒后返回认证/Cookie 被上游拒绝类别；stdout、响应正文、Cookie 和请求头均未输出，临时二进制、Cookie 文件和日志已清理。因此真实上游链路仍未通过，可能需要重新导出完整有效 Cookie 后再验收。
+- 之后用当前源码构建的临时 Windows amd64 CLI 逐个执行真实 Muse 短消息请求。Cookie 文件中 4 个包含 `hatch_sess` 的账号行全部返回认证/Cookie 被上游拒绝：账号行 2（约 5.8 秒）、5（约 5.9 秒）、8（约 5.1 秒）、12（约 7.1 秒）。stdout、响应正文、Cookie 和请求头均未输出，临时二进制、Cookie 文件和日志已清理。因此真实上游链路仍未通过，可能需要重新导出完整有效 Cookie 后再验收。
 - 未提供 Telegram Bot token、ASR 模型/云端密钥，Telegram、真实 Muse 回复、媒体生成、ASR、节点可用性和 ASUS 笔记本正式产物部署不能在本环境宣称通过。
 
 ## 18 项验收状态
