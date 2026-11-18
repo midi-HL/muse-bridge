@@ -82,24 +82,15 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	token, _ := values["telegram.token"].(string)
 	mode, _ := values["telegram.mode"].(string)
 	secret, _ := values["telegram.webhook_secret"].(string)
-	if strings.TrimSpace(token) == "" {
-		if r.cancel != nil {
-			r.cancel()
-			r.cancel = nil
-		}
-		if r.ch != nil {
-			_ = r.ch.Close()
-			r.ch = nil
-		}
-		return nil
+	webhookURL, _ := values["telegram.webhook_url"].(string)
+	if mode == "webhook" && strings.TrimSpace(webhookURL) == "" && strings.TrimSpace(token) != "" {
+		return errors.New("telegram: webhook mode requires telegram.webhook_url")
 	}
-	if r.ch != nil {
-		if r.cancel != nil {
-			r.cancel()
-			r.cancel = nil
-		}
-		_ = r.ch.Close()
-		r.ch = nil
+	if err := r.stopLocked(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(token) == "" {
+		return nil
 	}
 	ch, err := telegram.New(values, r.handler)
 	if err != nil {
@@ -108,16 +99,47 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	r.ch = ch
 	r.secret = secret
 	r.mode = mode
-	r.webhookURL, _ = values["telegram.webhook_url"].(string)
+	r.webhookURL = webhookURL
 	if mode == "webhook" {
-		if strings.TrimSpace(r.webhookURL) == "" {
-			return errors.New("telegram: webhook mode requires telegram.webhook_url")
+		if err := r.registerWebhookLocked(); err != nil {
+			_ = r.stopLocked()
+			return err
 		}
-		return r.registerWebhookLocked()
+		return nil
 	}
 	pollCtx, cancel := context.WithCancel(r.parent)
 	r.cancel = cancel
 	go func() { _ = ch.Run(pollCtx) }()
+	return nil
+}
+
+// stopLocked clears Telegram's remote webhook before replacing or disabling a
+// channel. Keeping this operation under the runtime lock prevents a stale
+// webhook handler from racing a settings reload.
+func (r *telegramRuntime) stopLocked() error {
+	if r.cancel != nil {
+		r.cancel()
+		r.cancel = nil
+	}
+	if r.ch == nil {
+		r.secret = ""
+		r.mode = ""
+		r.webhookURL = ""
+		return nil
+	}
+	if r.mode == "webhook" {
+		ctx, cancel := context.WithTimeout(r.parent, 15*time.Second)
+		err := r.ch.Client().DeleteWebhook(ctx)
+		cancel()
+		if err != nil {
+			return err
+		}
+	}
+	_ = r.ch.Close()
+	r.ch = nil
+	r.secret = ""
+	r.mode = ""
+	r.webhookURL = ""
 	return nil
 }
 
@@ -149,15 +171,6 @@ func (r *telegramRuntime) webhookSecret() string { r.mu.Lock(); defer r.mu.Unloc
 
 func (r *telegramRuntime) close() error {
 	r.mu.Lock()
-	if r.cancel != nil {
-		r.cancel()
-		r.cancel = nil
-	}
-	ch := r.ch
-	r.ch = nil
-	r.mu.Unlock()
-	if ch != nil {
-		return ch.Close()
-	}
-	return nil
+	defer r.mu.Unlock()
+	return r.stopLocked()
 }
