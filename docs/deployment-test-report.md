@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.14` 将包含 Telegram webhook 初始注册顺序修复；HTTP listener 绑定成功后才注册远端 webhook，避免启动失败时留下不可达 webhook。此前 `v0.1.0` 至 `v0.1.13` Release 已成功生成。
+- Release：`v0.1.14` 已由 GitHub Actions 成功生成，七个平台构建和 SHA-256 校验均通过；包含 Telegram webhook 初始注册顺序修复，HTTP listener 绑定成功后才注册远端 webhook，避免启动失败时留下不可达 webhook。此前 `v0.1.0` 至 `v0.1.13` Release 已成功生成。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
