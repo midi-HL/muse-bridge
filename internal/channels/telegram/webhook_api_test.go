@@ -48,7 +48,7 @@ func TestWebhookHandlerRejectsMalformedUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook", strings.NewReader("{}"))
+	r := httptest.NewRequest(http.MethodPost, "/telegram/webhook", strings.NewReader(`{"message":{"chat":{"id":1,"type":"private"},"from":{"id":1},"text":"/help"}}`))
 	w := httptest.NewRecorder()
 	ch.WebhookHandler().ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {

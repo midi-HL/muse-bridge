@@ -227,7 +227,7 @@ func (c *Client) call(ctx context.Context, method string, body url.Values) (json
 	return out.Result, nil
 }
 func (c *Client) Send(ctx context.Context, chat int64, text string, htmlMode bool) (int, error) {
-	chunks := Split(text, 4096)
+	chunks := splitAllTelegramText(text, telegramTextLimit)
 	last := 0
 	for _, part := range chunks {
 		v := url.Values{"chat_id": {strconv.FormatInt(chat, 10)}, "text": {part}}
@@ -249,6 +249,11 @@ func (c *Client) Send(ctx context.Context, chat int64, text string, htmlMode boo
 func (c *Client) Edit(ctx context.Context, chat int64, id int, text string) error {
 	_, e := c.call(ctx, "editMessageText", url.Values{"chat_id": {strconv.FormatInt(chat, 10)}, "message_id": {strconv.Itoa(id)}, "text": {text}})
 	return e
+}
+
+func (c *Client) Delete(ctx context.Context, chat int64, id int) error {
+	_, err := c.call(ctx, "deleteMessage", url.Values{"chat_id": {strconv.FormatInt(chat, 10)}, "message_id": {strconv.Itoa(id)}})
+	return err
 }
 
 // SetWebhook registers Telegram's HTTPS callback. The secret is sent only in
@@ -405,22 +410,24 @@ func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
 		}
 		return e
 	}
-	emitted := false
+	stream := NewStreamEditor(client, r.ChatID, 1200*time.Millisecond)
+	if err := stream.Start(ctx); err != nil {
+		return err
+	}
 	resp, e := handler.Chat(ctx, r, func(text string) error {
 		if text == "" {
 			return nil
 		}
-		emitted = true
-		_, e := client.Send(ctx, r.ChatID, MarkdownHTML(text), true)
-		return e
+		return stream.Push(ctx, text)
 	})
 	if e != nil {
+		_ = stream.Abort(ctx)
 		return e
 	}
-	if !emitted && resp.Text != "" {
-		_, e = client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+	if err := stream.Close(ctx, resp.Text); err != nil {
+		return err
 	}
-	return e
+	return nil
 }
 func (ch *Channel) WebhookHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -429,7 +436,7 @@ func (ch *Channel) WebhookHandler() http.Handler {
 			return
 		}
 		var u update
-		if json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&u) != nil {
+		if json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&u) != nil || u.Message.Chat.ID == 0 {
 			http.Error(w, "bad update", 400)
 			return
 		}
