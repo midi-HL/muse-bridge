@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/media"
 	"github.com/midi-HL/muse-bridge/internal/secure"
 )
@@ -29,6 +30,10 @@ type nodeRecord struct {
 	MaskedURL string `json:"masked_url,omitempty"`
 	// URLMasked is retained for reading older records and API clients.
 	URLMasked string `json:"url_masked,omitempty"`
+	LatencyMS int64  `json:"latency_ms"`
+	TestedAt  string `json:"tested_at"`
+	Error     string `json:"error"`
+	Status    string `json:"status"`
 }
 
 type personaRecord struct {
@@ -53,6 +58,11 @@ type stickerRecord struct {
 	ID          string `json:"id"`
 	Name        string `json:"name,omitempty"`
 	URL         string `json:"url,omitempty"`
+	Pack        string `json:"pack,omitempty"`
+	Emoji       string `json:"emoji,omitempty"`
+	FileID      string `json:"file_id,omitempty"`
+	MIME        string `json:"mime,omitempty"`
+	FilePath    string `json:"file_path,omitempty"`
 	Description string `json:"description,omitempty"`
 	Size        int64  `json:"size,omitempty"`
 	SHA256      string `json:"sha256,omitempty"`
@@ -264,8 +274,8 @@ func (s *Service) saveSchedule(ctx context.Context, args map[string]any) (any, e
 	if err != nil {
 		return nil, err
 	}
-	if len(strings.Fields(cron)) != 5 {
-		return nil, errors.New("cron must contain five fields")
+	if len(strings.Fields(cron)) != 5 || !validCron(cron) {
+		return nil, errors.New("cron must contain five valid fields")
 	}
 	tz, err := textArg(args, "timezone", true, 128)
 	if err != nil {
@@ -282,6 +292,36 @@ func (s *Service) saveSchedule(ctx context.Context, args map[string]any) (any, e
 		return nil, err
 	}
 	return item, nil
+}
+
+func (s *Service) importStickers(ctx context.Context, args map[string]any) (any, error) {
+	rawURL, err := textArg(args, "url", true, 4096)
+	if err != nil {
+		return nil, err
+	}
+	s.settingsMu.RLock()
+	token, _ := s.settings["telegram.token"].(string)
+	s.settingsMu.RUnlock()
+	if strings.TrimSpace(token) == "" {
+		return nil, telegram.ErrNotConfigured
+	}
+	report, err := telegram.ImportStickerSetContext(ctx, token, rawURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, asset := range report.Assets {
+		id := asset.ID
+		if id == "" {
+			id = secure.ID()
+		}
+		item := stickerRecord{ID: id, Name: report.Pack, URL: rawURL, Pack: asset.Pack, Emoji: asset.Emoji, FileID: asset.FileID, MIME: asset.MIME, FilePath: asset.FilePath}
+		if err := s.db.Put(ctx, "sticker", id, item, nil); err != nil {
+			report.Failed = append(report.Failed, telegram.StickerImportFailure{ID: id, Error: "storage failure"})
+			report.Imported--
+		}
+	}
+	// Return a stable, non-secret summary suitable for API clients.
+	return map[string]any{"pack": report.Pack, "total": report.Total, "imported": report.Imported, "failed": report.Failed}, nil
 }
 
 func (s *Service) updateSticker(ctx context.Context, args map[string]any) (any, error) {

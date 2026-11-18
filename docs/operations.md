@@ -19,8 +19,8 @@
 | Web/OpenAI 聊天 | `/chat`、`/v1/chat/completions` | SSE、非流式和 stop 已接入 core |
 | 文件生成物 | `/files/{id}` | 需管理会话或外部 API key；强制下载 |
 | 账号导入/探活 | `accounts.import/list/probe` | 依赖 pool/core；失败不得伪造成功 |
-| 节点、会话、定时任务、人设 | `nodes.*`、`sessions.*`、`schedules.*`、`personas.*` | 已接入 SQLite 持久化；节点 URL secret 加密，State 只返回掩码 |
-| 贴纸、ASR | `stickers.*`、`asr.*` | 贴纸描述 CRUD 和 ASR 测试/模型安全下载已接入；Telegram 贴纸包自动导入和未配置 ASR 模型明确返回 unsupported/配置错误 |
+| 节点、会话、定时任务、人设 | `nodes.*`、`sessions.*`、`schedules.*`、`personas.*` | 已接入 SQLite 持久化；节点 URL secret 加密，State 只返回掩码；节点测试通过固定 Muse session endpoint，计划任务按时区去重调度并写入日志/回调 |
+| 贴纸、ASR | `stickers.*`、`asr.*` | 贴纸描述 CRUD、Telegram `t.me/addstickers` 元数据导入、ASR 测试/模型安全下载已接入；视觉描述和未配置 ASR 模型明确返回 unsupported/配置错误 |
 | 加密备份 | `backup.export`、`backup.import` | AES-GCM + 独立口令；导入先校验，允许覆盖并支持失败回滚；禁止恢复管理员会话/API key |
 | Hatch 任务/线程/协议探活 | `protocol.*` | 仅协议层已提供的能力可用，未知上游能力明确 unsupported |
 | Telegram | `internal/channels/telegram` | 已提供长轮询/webhook、白名单、命令分派和流式回调边界；需要部署机填写 Bot token 才能进行外部验收 |

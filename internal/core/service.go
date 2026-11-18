@@ -23,23 +23,27 @@ import (
 )
 
 type Service struct {
-	life         context.Context
-	cancel       context.CancelFunc
-	db           *store.Store
-	vault        *secure.Vault
-	redactor     *secure.Redactor
-	dataDir      string
-	settingsMu   sync.RWMutex
-	settings     map[string]any
-	settingsHook func(map[string]any) error
-	pool         *pool.Pool
-	media        *media.Processor
-	gate         chan struct{}
-	queueMu      sync.Mutex
-	queued       int
-	sessionsMu   sync.Mutex
-	sessions     map[string]context.CancelFunc
-	closeOnce    sync.Once
+	life             context.Context
+	cancel           context.CancelFunc
+	db               *store.Store
+	vault            *secure.Vault
+	redactor         *secure.Redactor
+	dataDir          string
+	settingsMu       sync.RWMutex
+	settings         map[string]any
+	settingsHook     func(map[string]any) error
+	pool             *pool.Pool
+	media            *media.Processor
+	gate             chan struct{}
+	queueMu          sync.Mutex
+	queued           int
+	sessionsMu       sync.Mutex
+	sessions         map[string]context.CancelFunc
+	scheduleMu       sync.Mutex
+	scheduleCallback ScheduleCallback
+	scheduleRuns     map[string]bool
+	schedulerWG      sync.WaitGroup
+	closeOnce        sync.Once
 }
 
 type fileRecord struct {
@@ -131,7 +135,8 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		_ = p.Close()
 		return nil, err
 	}
-	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}}
+	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
+	s.startScheduler()
 	return s, nil
 }
 
@@ -144,6 +149,7 @@ func (s *Service) Close() error {
 			delete(s.sessions, id)
 		}
 		s.sessionsMu.Unlock()
+		s.schedulerWG.Wait()
 		_ = s.pool.Close()
 	})
 	return nil
@@ -333,7 +339,11 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 	case "nodes.delete":
 		return nil, s.deleteManaged(ctx, "node", args)
 	case "nodes.test", "nodes.probe":
-		return nil, errors.New("unsupported operation: node connectivity is not exposed by the remote service")
+		id, err := requireID(args)
+		if err != nil {
+			return nil, err
+		}
+		return s.testNode(ctx, id)
 	case "personas.save":
 		return s.savePersona(ctx, args)
 	case "personas.delete":
@@ -343,7 +353,7 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 	case "schedules.delete":
 		return nil, s.deleteManaged(ctx, "schedule", args)
 	case "stickers.import":
-		return nil, errors.New("unsupported operation: sticker import requires a Telegram sticker API")
+		return s.importStickers(ctx, args)
 	case "stickers.update":
 		return s.updateSticker(ctx, args)
 	case "stickers.delete":

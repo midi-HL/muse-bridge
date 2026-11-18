@@ -17,6 +17,7 @@ import (
 )
 
 var ErrUnsupported = errors.New("telegram: operation unsupported by upstream protocol")
+var ErrNotConfigured = errors.New("telegram: bot token is not configured")
 
 type Request struct {
 	ChatID                         int64
@@ -37,8 +38,23 @@ type Delivery struct {
 }
 type StickerAsset struct {
 	ID, Emoji, FileID, MIME string
+	Pack                    string
+	FilePath                string
 	Data                    []byte
 	Description             string
+}
+
+type StickerImportFailure struct {
+	ID    string `json:"id,omitempty"`
+	Error string `json:"error"`
+}
+
+type StickerImportReport struct {
+	Pack     string                 `json:"pack"`
+	Assets   []StickerAsset         `json:"assets"`
+	Total    int                    `json:"total"`
+	Imported int                    `json:"imported"`
+	Failed   []StickerImportFailure `json:"failed,omitempty"`
 }
 type Handler interface {
 	Chat(context.Context, Request, func(string) error) (Response, error)
@@ -86,13 +102,99 @@ type Client struct {
 }
 
 func NewClient(token string, h *http.Client) (*Client, error) {
-	if token == "" {
-		return nil, errors.New("telegram: bot token required")
+	if strings.TrimSpace(token) == "" {
+		return nil, ErrNotConfigured
 	}
 	if h == nil {
 		h = &http.Client{Timeout: 60 * time.Second}
 	}
 	return &Client{token: token, base: "https://api.telegram.org/bot" + token, http: h}, nil
+}
+
+func stickerSetName(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || strings.ContainsAny(raw, "\x00\r\n") {
+		return "", errors.New("telegram: sticker set URL is invalid")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host != "t.me" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("telegram: sticker set URL is invalid")
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] != "addstickers" || parts[1] == "" || len(parts[1]) > 128 {
+		return "", errors.New("telegram: sticker set URL is invalid")
+	}
+	for _, r := range parts[1] {
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' {
+			return "", errors.New("telegram: sticker set URL is invalid")
+		}
+	}
+	return parts[1], nil
+}
+
+// ImportStickerSet retrieves sticker metadata using a background context. It is
+// the compact helper for callers that only need successfully parsed assets.
+func ImportStickerSet(token, rawURL string, h *http.Client) ([]StickerAsset, error) {
+	report, err := ImportStickerSetContext(context.Background(), token, rawURL, h)
+	if err != nil {
+		return nil, err
+	}
+	return report.Assets, nil
+}
+
+// ImportStickerSetContext retrieves metadata and preserves per-item failures for
+// callers such as the core action that need an import report.
+func ImportStickerSetContext(ctx context.Context, token, rawURL string, h *http.Client) (StickerImportReport, error) {
+	name, err := stickerSetName(rawURL)
+	if err != nil {
+		return StickerImportReport{}, err
+	}
+	client, err := NewClient(token, h)
+	if err != nil {
+		return StickerImportReport{}, err
+	}
+	result, err := client.call(ctx, "getStickerSet", url.Values{"name": {name}})
+	if err != nil {
+		return StickerImportReport{}, err
+	}
+	var set struct {
+		Name     string `json:"name"`
+		Stickers []struct {
+			ID       string `json:"file_id"`
+			UniqueID string `json:"file_unique_id"`
+			Emoji    string `json:"emoji"`
+			IsAnim   bool   `json:"is_animated"`
+			IsVideo  bool   `json:"is_video"`
+		} `json:"stickers"`
+	}
+	if err := json.Unmarshal(result, &set); err != nil {
+		return StickerImportReport{}, errors.New("telegram: invalid sticker set response")
+	}
+	if set.Name == "" {
+		set.Name = name
+	}
+	report := StickerImportReport{Pack: set.Name, Total: len(set.Stickers), Assets: make([]StickerAsset, 0, len(set.Stickers))}
+	for _, sticker := range set.Stickers {
+		if sticker.ID == "" {
+			report.Failed = append(report.Failed, StickerImportFailure{ID: sticker.UniqueID, Error: "missing sticker file_id"})
+			continue
+		}
+		mime := "image/webp"
+		if sticker.IsAnim {
+			mime = "application/x-tgsticker"
+		} else if sticker.IsVideo {
+			mime = "video/webm"
+		}
+		id := sticker.UniqueID
+		if id == "" {
+			id = sticker.ID
+		}
+		asset := StickerAsset{ID: id, Emoji: sticker.Emoji, FileID: sticker.ID, MIME: mime, Pack: set.Name}
+		// A file_id is a safe opaque Telegram identifier; no local path is derived.
+		report.Assets = append(report.Assets, asset)
+		report.Imported++
+	}
+	return report, nil
 }
 func (c *Client) call(ctx context.Context, method string, body url.Values) (json.RawMessage, error) {
 	req, e := http.NewRequestWithContext(ctx, http.MethodPost, c.base+"/"+method, strings.NewReader(body.Encode()))
