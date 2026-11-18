@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
-- 本轮文件安全补丁：本地测试已通过，独立审查和 GitHub CI/Release 待确认。历史标签并非全部构建成功，不以标签存在代替验收通过。
+- 本轮文件安全补丁：`v0.1.26`，源码提交 `d6cd64e44d55ad13a845a202a7998c828658bd6f`。CI [44242271552](https://github.com/midi-HL/muse-bridge/actions/runs/44242271552) 的格式、vet、单元测试、race、漏洞检查、构建全部通过；Release [44242561924](https://github.com/midi-HL/muse-bridge/actions/runs/44242561924) 七平台及发布通过。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
@@ -27,6 +27,8 @@
 - 修复后：`go test ./internal/core ./internal/httpapi ./internal/media -count=1 -timeout=90s` 通过。覆盖生成物目录限定、跨 key 文件隔离、普通文件/链接判断、备份预验证、合法旧路径与相对路径迁移、数据库失败时清理孤儿文件、ASR SHA-256 和不返回绝对路径。
 - 下载用例先复现无/虚报 Content-Length 超限、读取错误返回部分内容、URL 错误泄密、DNS 未受总期限约束与环境代理继承；修复后对应测试通过。测试使用 fake resolver/transport、net.Pipe 和本地临时文件，不访问用户 Cookie 或真实上游。
 - `go vet ./...`、`go test -count=1 -timeout=90s ./...`、`CGO_ENABLED=0 go build -trimpath`、Node 前端 4 项测试通过。Windows 本机没有 gcc，race 结果需以本轮 GitHub CI 的实际结果为准。
+- 下载 GitHub Actions 的 `muse-bridge-windows-amd64.exe`，SHA-256 实测为 `4ecdbfbd42960a8361b6c217152aef3a4444a3359311d7d3dcee21d7929e6159`，与发布校验文件一致。该正式产物在本机隔离临时数据目录实际启动，设密、Schema checksum 字段、State 脱敏、API key 认证、缺失文件 404、WebUI HTTP 资源返回均通过；测试进程和临时数据已清理。
+- 独立代码审查确认一个旧备份跨数据目录恢复问题；已增加失败用例并修复，根代理复验通过。独立审查的最终复检会话异常中断，因此不将其记录为独立最终通过。
 - 当前完整应用仍存在前文列出的未实测外部链路；本轮修复不等价于所有需求都已验收。
 
 ## 本地 HTTP 冒烟

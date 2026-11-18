@@ -30,7 +30,8 @@
 | `go test ./internal/core ./internal/pool ./internal/httpapi` | 通过，含 secret 掩码/持久化和 session 隔离 |
 | `CGO_ENABLED=0 go build ./cmd/muse-bridge` | 通过 |
 | `go test -race ./...` | 本机 Windows Go race 需要 CGO；CI 以 `CGO_ENABLED=1` 执行，发布仍 `CGO_ENABLED=0` |
-| `govulncheck ./...` | 需在 CI 安装工具后执行；当前环境尚未安装 |
+| `govulncheck ./...` | 本轮源码提交 d6cd64e 的 CI 44242271552 已通过 |
+| `go test -race -count=1 ./...` | 同一提交的 Ubuntu CI 已通过；本机没有 gcc |
 
 ## 文件与媒体安全补丁的失败证明与复验
 
