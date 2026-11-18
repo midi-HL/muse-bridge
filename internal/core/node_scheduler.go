@@ -89,7 +89,9 @@ func (s *Service) runSchedulerOnce(now time.Time) {
 		}
 		itemCopy := ScheduleExecution{ID: item.ID, Name: item.Name, Platform: item.Platform, Target: item.Target, Prompt: item.Prompt, Cron: item.Cron, Timezone: item.Timezone, Enabled: item.Enabled}
 		executionTime := now.In(loc)
+		s.executionWG.Add(1)
 		go func() {
+			defer s.executionWG.Done()
 			select {
 			case <-s.life.Done():
 				return
@@ -108,7 +110,7 @@ func validCron(expr string) bool {
 	if len(fields) != 5 {
 		return false
 	}
-	max := [...]int{59, 23, 31, 12, 6}
+	max := [...]int{59, 23, 31, 12, 7}
 	min := [...]int{0, 0, 1, 1, 0}
 	for i, f := range fields {
 		if _, err := cronFieldMatches(f, -1, min[i], max[i]); err != nil {
@@ -123,9 +125,10 @@ func cronMatches(expr string, t time.Time) bool {
 	if len(fields) != 5 {
 		return false
 	}
-	vals := [...]int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), int(t.Weekday())}
+	dow := int(t.Weekday())
+	vals := [...]int{t.Minute(), t.Hour(), t.Day(), int(t.Month()), dow}
 	min := [...]int{0, 0, 1, 1, 0}
-	max := [...]int{59, 23, 31, 12, 6}
+	max := [...]int{59, 23, 31, 12, 7}
 	for i := 0; i < 2; i++ {
 		ok, err := cronFieldMatches(fields[i], vals[i], min[i], max[i])
 		if err != nil || !ok {
@@ -140,7 +143,10 @@ func cronMatches(expr string, t time.Time) bool {
 	// fields are restricted. If either field is wildcard, the other is
 	// the effective constraint.
 	dom, domErr := cronFieldMatches(fields[2], vals[2], min[2], max[2])
-	dow, dowErr := cronFieldMatches(fields[4], vals[4], min[4], max[4])
+	dowMatch, dowErr := cronFieldMatches(fields[4], vals[4], min[4], max[4])
+	if !dowMatch && vals[4] == 0 {
+		dowMatch, dowErr = cronFieldMatches(fields[4], 7, min[4], max[4])
+	}
 	if domErr != nil || dowErr != nil {
 		return false
 	}
@@ -150,11 +156,11 @@ func cronMatches(expr string, t time.Time) bool {
 	case domWildcard && dowWildcard:
 		return true
 	case domWildcard:
-		return dow
+		return dowMatch
 	case dowWildcard:
 		return dom
 	default:
-		return dom || dow
+		return dom || dowMatch
 	}
 }
 
@@ -179,6 +185,13 @@ func cronFieldMatches(field string, value, min, max int) (bool, error) {
 			step, part = n, parts[0]
 		}
 		start, end := min, max
+		if max == 7 && part == "7" {
+			// Cron convention permits both 0 and 7 for Sunday.
+			if value < 0 || value == 0 || value == 7 {
+				return true, nil
+			}
+			continue
+		}
 		switch {
 		case part == "*" || part == "":
 		case strings.Contains(part, "-"):

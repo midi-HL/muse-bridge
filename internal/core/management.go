@@ -103,7 +103,8 @@ func proxyURL(raw string) error {
 	if err != nil || u.Scheme == "" || u.Host == "" || u.Hostname() == "" {
 		return errors.New("proxy URL is invalid")
 	}
-	switch strings.ToLower(u.Scheme) {
+	scheme := strings.ToLower(u.Scheme)
+	switch scheme {
 	case "http", "https", "socks5", "socks5h":
 	default:
 		return errors.New("proxy URL scheme is unsupported")
@@ -112,7 +113,7 @@ func proxyURL(raw string) error {
 		return errors.New("proxy URL is invalid")
 	}
 	portText := u.Port()
-	if (u.Scheme == "socks5" || u.Scheme == "socks5h") && portText == "" {
+	if (scheme == "socks5" || scheme == "socks5h") && portText == "" {
 		return errors.New("proxy URL is invalid")
 	}
 	if portText != "" {

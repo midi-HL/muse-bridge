@@ -4,7 +4,7 @@
 
 - 仓库：`midi-HL/muse-bridge`
 - 提交：`b33fb06`（将 Go 标准库锁定到 `go 1.27.4`）
-- Release：`v0.1.6` 将包含本轮节点探测、计划任务调度、Telegram 贴纸元数据导入和测试修复；GitHub Actions 七平台构建与 SHA-256 校验由 Release workflow 负责。此前 `v0.1.0`、`v0.1.1`、`v0.1.2` 与 `v0.1.3` Release 已成功生成。
+- Release：`v0.1.8` 将包含节点探测、计划任务调度、Telegram 贴纸元数据导入、Cron 兼容性和调度器关闭生命周期修复；GitHub Actions 七平台构建与 SHA-256 校验由 Release workflow 负责。此前 `v0.1.0` 至 `v0.1.7` Release 已成功生成。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 

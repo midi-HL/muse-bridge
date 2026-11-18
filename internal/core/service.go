@@ -43,6 +43,7 @@ type Service struct {
 	scheduleCallback ScheduleCallback
 	scheduleRuns     map[string]bool
 	schedulerWG      sync.WaitGroup
+	executionWG      sync.WaitGroup
 	closeOnce        sync.Once
 }
 
@@ -150,6 +151,7 @@ func (s *Service) Close() error {
 		}
 		s.sessionsMu.Unlock()
 		s.schedulerWG.Wait()
+		s.executionWG.Wait()
 		_ = s.pool.Close()
 	})
 	return nil

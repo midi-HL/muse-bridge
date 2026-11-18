@@ -46,6 +46,9 @@ func TestCronMatcherAndSchedulerCallback(t *testing.T) {
 	if !cronMatches("0 9 2 * 5", matched) {
 		t.Fatal("cron DOM/DOW OR semantics are missing")
 	}
+	if !validCron("0 9 * * 7") || !cronMatches("0 9 * * 7", time.Date(2026, time.January, 4, 9, 0, 0, 0, loc)) {
+		t.Fatal("cron Sunday=7 alias is not supported")
+	}
 	if validCron("0 9 * * *") == false || validCron("every day") || validCron("0 9 0 * *") {
 		t.Fatal("cron validator accepted invalid expression")
 	}
