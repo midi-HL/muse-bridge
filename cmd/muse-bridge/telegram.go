@@ -12,27 +12,42 @@ import (
 
 	"github.com/midi-HL/muse-bridge/internal/channels/telegram"
 	"github.com/midi-HL/muse-bridge/internal/core"
-	"github.com/midi-HL/muse-bridge/internal/secure"
 )
 
 type telegramServiceHandler struct{ service *core.Service }
 
+func (h *telegramServiceHandler) currentSession(ctx context.Context, r telegram.Request) (string, error) {
+	if r.SessionID != "" {
+		return r.SessionID, nil
+	}
+	return h.service.TelegramSession(ctx, r.ChatID, r.UserID)
+}
+func (h *telegramServiceHandler) BindSession(ctx context.Context, r telegram.Request) (telegram.Request, error) {
+	id, err := h.currentSession(ctx, r)
+	r.SessionID = id
+	return r, err
+}
+func (h *telegramServiceHandler) newSession(ctx context.Context, r telegram.Request) (string, error) {
+	return h.service.NewTelegramSession(ctx, r.ChatID, r.UserID)
+}
+
 type telegramRuntime struct {
-	mu         sync.Mutex
-	parent     context.Context
-	cancel     context.CancelFunc
-	ch         *telegram.Channel
-	service    *core.Service
-	handler    telegram.Handler
-	token      string
-	secret     string
-	mode       string
-	webhookURL string
-	whitelist  string
+	mu          sync.Mutex
+	parent      context.Context
+	cancel      context.CancelFunc
+	ch          *telegram.Channel
+	service     *core.Service
+	handler     telegram.Handler
+	token       string
+	secret      string
+	mode        string
+	webhookURL  string
+	whitelist   string
+	botUsername string
 }
 
 type telegramConfig struct {
-	token, mode, secret, webhookURL, whitelist string
+	token, mode, secret, webhookURL, whitelist, botUsername string
 }
 
 func readTelegramConfig(values map[string]any) telegramConfig {
@@ -42,16 +57,21 @@ func readTelegramConfig(values map[string]any) telegramConfig {
 	cfg.secret, _ = values["telegram.webhook_secret"].(string)
 	cfg.webhookURL, _ = values["telegram.webhook_url"].(string)
 	cfg.whitelist, _ = values["telegram.whitelist"].(string)
+	cfg.botUsername, _ = values["telegram.bot_username"].(string)
 	return cfg
 }
 func (r *telegramRuntime) sameConfig(cfg telegramConfig) bool {
-	return r.token == cfg.token && r.mode == cfg.mode && r.secret == cfg.secret && r.webhookURL == cfg.webhookURL && r.whitelist == cfg.whitelist
+	return r.token == cfg.token && r.mode == cfg.mode && r.secret == cfg.secret && r.webhookURL == cfg.webhookURL && r.whitelist == cfg.whitelist && r.botUsername == cfg.botUsername
 }
 
-func (h telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
-	session := fmt.Sprintf("telegram_%d", r.ChatID)
-	result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: strconv.FormatInt(r.UserID, 10), Prompt: r.Text}, func(ev core.ChatEvent) error {
-		if ev.Type == "text" && ev.Text != "" {
+func (h *telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
+	session, err := h.currentSession(ctx, r)
+	if err != nil {
+		return telegram.Response{}, err
+	}
+	owner := strconv.FormatInt(r.ChatID, 10)
+	result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: owner, Prompt: r.Text, RetryUserID: strconv.FormatInt(r.UserID, 10)}, func(ev core.ChatEvent) error {
+		if ev.Type == "text" && ev.Text != "" && emit != nil {
 			return emit(ev.Text)
 		}
 		return nil
@@ -59,14 +79,30 @@ func (h telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, em
 	return telegram.Response{Text: result.Text}, err
 }
 
-func (h telegramServiceHandler) Command(ctx context.Context, r telegram.Request, cmd telegram.Command) (telegram.Response, error) {
-	session := fmt.Sprintf("telegram_%d", r.ChatID)
+func (h *telegramServiceHandler) Command(ctx context.Context, r telegram.Request, cmd telegram.Command) (telegram.Response, error) {
+	session, err := h.currentSession(ctx, r)
+	if err != nil {
+		return telegram.Response{}, err
+	}
+	text, err := h.service.TelegramCommandOnce(ctx, session, r.ChatID, r.UserID, r.MessageID, cmd.Name, func() (string, error) { resp, e := h.command(ctx, r, cmd, session); return resp.Text, e })
+	return telegram.Response{Text: text}, err
+}
+func (h *telegramServiceHandler) command(ctx context.Context, r telegram.Request, cmd telegram.Command, session string) (telegram.Response, error) {
 	switch cmd.Name {
 	case "new":
-		session = "telegram_" + secure.ID()
+		if _, err := h.newSession(ctx, r); err != nil {
+			return telegram.Response{}, err
+		}
 		return telegram.Response{Text: "已创建新会话。"}, nil
+	case "retry":
+		attemptID, err := h.service.TelegramRetryAttempt(ctx, session, strconv.FormatInt(r.UserID, 10))
+		if err != nil {
+			return telegram.Response{Text: "没有可重试的上一条请求。"}, nil
+		}
+		result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: strconv.FormatInt(r.ChatID, 10), RetryUserID: strconv.FormatInt(r.UserID, 10), RetryAttemptID: attemptID, Retry: true}, nil)
+		return telegram.Response{Text: result.Text}, err
 	case "stop":
-		return telegram.Response{Text: map[bool]string{true: "已请求停止当前生成。", false: "当前没有正在生成的请求。"}[h.service.Stop(session)]}, nil
+		return telegram.Response{Text: map[bool]string{true: "已请求停止当前聊天的生成。", false: "当前没有正在生成的请求。"}[h.service.StopTelegramChat(r.ChatID)]}, nil
 	case "status":
 		state, err := h.service.State(ctx)
 		if err != nil {
@@ -78,7 +114,7 @@ func (h telegramServiceHandler) Command(ctx context.Context, r telegram.Request,
 		text, err := h.service.TelegramPersonas(ctx, session, strconv.FormatInt(r.UserID, 10), cmd.Args)
 		return telegram.Response{Text: text}, err
 	case "help":
-		return telegram.Response{Text: "/new 新会话\n/stop 停止生成\n/status 查看状态\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
+		return telegram.Response{Text: "/new 新会话\n/stop 停止生成\n/status 查看状态\n/retry 重试上一条请求\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
 	case "tasks", "usage":
 		return telegram.Response{}, telegram.ErrUnsupported
 	default:
@@ -86,15 +122,15 @@ func (h telegramServiceHandler) Command(ctx context.Context, r telegram.Request,
 	}
 }
 
-func (h telegramServiceHandler) Sticker(context.Context, string) (telegram.StickerAsset, error) {
+func (h *telegramServiceHandler) Sticker(context.Context, string) (telegram.StickerAsset, error) {
 	return telegram.StickerAsset{}, telegram.ErrUnsupported
 }
-func (h telegramServiceHandler) Feedback(context.Context, telegram.Request, telegram.Delivery) error {
+func (h *telegramServiceHandler) Feedback(context.Context, telegram.Request, telegram.Delivery) error {
 	return nil
 }
 
 func newTelegramRuntime(ctx context.Context, service *core.Service) *telegramRuntime {
-	return &telegramRuntime{parent: ctx, service: service, handler: telegramServiceHandler{service: service}}
+	return &telegramRuntime{parent: ctx, service: service, handler: &telegramServiceHandler{service: service}}
 }
 
 func (r *telegramRuntime) apply(values map[string]any) error {
@@ -124,6 +160,7 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	r.mode = mode
 	r.webhookURL = webhookURL
 	r.whitelist = cfg.whitelist
+	r.botUsername = cfg.botUsername
 	if mode == "webhook" {
 		if err := r.registerWebhookLocked(); err != nil {
 			_ = r.stopLocked()

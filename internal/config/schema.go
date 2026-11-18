@@ -50,6 +50,7 @@ var Fields = []Field{
 	flag("web.enabled", "启用网页聊天", "Enable web chat", "platforms", true),
 	flag("telegram.enabled", "启用 Telegram", "Enable Telegram", "platforms", false),
 	secret("telegram.token", "Bot Token", "Bot token", "platforms"),
+	text("telegram.bot_username", "Bot 用户名（群命令目标验证）", "Bot username (group command target validation)", "platforms", ""),
 	choice("telegram.mode", "接收模式", "Update mode", "platforms", "polling", "polling", "webhook"),
 	text("telegram.webhook_url", "Webhook 地址", "Webhook URL", "platforms", ""),
 	secret("telegram.webhook_secret", "Webhook 验证密钥", "Webhook secret", "platforms"),

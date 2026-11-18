@@ -32,7 +32,7 @@ func TestTelegramPersonaCommandPersistsOwnedSelection(t *testing.T) {
 	if _, err = svc.Action(ctx, "personas.save", map[string]any{"id": "calm", "name": "Calm", "prompt": "Answer calmly."}); err != nil {
 		t.Fatal(err)
 	}
-	handler := telegramServiceHandler{service: svc}
+	handler := &telegramServiceHandler{service: svc}
 	user := telegram.Request{ChatID: 42, UserID: 42}
 	list, err := handler.Command(ctx, user, telegram.Command{Name: "persona"})
 	if err != nil || !strings.Contains(list.Text, "calm") {

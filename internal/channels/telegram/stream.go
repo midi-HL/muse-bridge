@@ -259,7 +259,9 @@ func (s *StreamEditor) Abort(ctx context.Context) error {
 	}
 	s.closed = true
 	if !s.hasText && s.messageID != 0 {
-		return s.client.Delete(ctx, s.chatID, s.messageID)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return s.client.Delete(cleanupCtx, s.chatID, s.messageID)
 	}
 	return nil
 }

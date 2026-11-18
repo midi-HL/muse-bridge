@@ -23,30 +23,33 @@ import (
 )
 
 type Service struct {
-	life             context.Context
-	cancel           context.CancelFunc
-	db               *store.Store
-	vault            *secure.Vault
-	redactor         *secure.Redactor
-	dataDir          string
-	fileRoot         *os.Root
-	settingsMu       sync.RWMutex
-	settings         map[string]any
-	settingsHook     func(map[string]any) error
-	pool             *pool.Pool
-	generate         func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
-	media            *media.Processor
-	gate             chan struct{}
-	queueMu          sync.Mutex
-	queued           int
-	sessionsMu       sync.Mutex
-	sessions         map[string]context.CancelFunc
-	scheduleMu       sync.Mutex
-	scheduleCallback ScheduleCallback
-	scheduleRuns     map[string]bool
-	schedulerWG      sync.WaitGroup
-	executionWG      sync.WaitGroup
-	closeOnce        sync.Once
+	life              context.Context
+	cancel            context.CancelFunc
+	db                *store.Store
+	vault             *secure.Vault
+	redactor          *secure.Redactor
+	dataDir           string
+	fileRoot          *os.Root
+	settingsMu        sync.RWMutex
+	settings          map[string]any
+	settingsHook      func(map[string]any) error
+	pool              *pool.Pool
+	generate          func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
+	media             *media.Processor
+	gate              chan struct{}
+	queueMu           sync.Mutex
+	queued            int
+	sessionsMu        sync.Mutex
+	sessions          map[string]context.CancelFunc
+	telegramSessionMu sync.Mutex
+	telegramCommandMu sync.Mutex
+	telegramCommands  map[string]chan struct{}
+	scheduleMu        sync.Mutex
+	scheduleCallback  ScheduleCallback
+	scheduleRuns      map[string]bool
+	schedulerWG       sync.WaitGroup
+	executionWG       sync.WaitGroup
+	closeOnce         sync.Once
 }
 
 type fileRecord struct {
@@ -172,6 +175,15 @@ func (s *Service) Close() error {
 	})
 	return nil
 }
+
+// SetGenerateForTest replaces the generation adapter for deterministic package-level
+// integration tests and returns a function restoring the previous adapter.
+func (s *Service) SetGenerateForTest(fn func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)) func() {
+	previous := s.generate
+	s.generate = fn
+	return func() { s.generate = previous }
+}
+
 func (s *Service) Settings() map[string]any {
 	s.settingsMu.RLock()
 	defer s.settingsMu.RUnlock()
@@ -430,10 +442,22 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		id, _ := args["id"].(string)
 		s.sessionsMu.Lock()
 		defer s.sessionsMu.Unlock()
+		s.telegramCommandMu.Lock()
+		defer s.telegramCommandMu.Unlock()
 		if s.sessions[id] != nil {
 			return nil, errors.New("session is generating")
 		}
-		return nil, s.db.Delete(ctx, "session", id)
+		if err := s.invalidateTelegramRetries(ctx, id); err != nil {
+			return nil, err
+		}
+		if err := s.invalidateTelegramCommands(ctx, id); err != nil {
+			return nil, err
+		}
+		err := s.db.Delete(ctx, "session", id)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = nil
+		}
+		return nil, err
 	case "sessions.rename":
 		id, _ := args["id"].(string)
 		s.sessionsMu.Lock()
@@ -498,6 +522,22 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	defer s.release()
 	var result ChatResult
 	result.SessionID = req.SessionID
+	var retryState telegramRetryState
+	if req.Retry {
+		if req.Platform != "telegram" || req.RetryUserID == "" || req.RetryAttemptID == "" {
+			return result, errors.New("retry is supported only for Telegram requests")
+		}
+		var loadErr error
+		retryState, loadErr = s.telegramRetryRecord(runCtx, req.SessionID, req.RetryUserID)
+		if loadErr != nil || retryState.Owner != req.RetryUserID || retryState.Prompt == "" || retryState.AttemptID != req.RetryAttemptID {
+			return result, errors.New("no previous message to retry")
+		}
+		chatID := telegramChatIDFromSession(req.SessionID)
+		var pointer telegramSessionRecord
+		if chatID == 0 || s.db.Get(runCtx, "telegram_session", telegramSessionKey(chatID), &pointer) != nil || pointer.SessionID != req.SessionID {
+			return result, errors.New("no previous message to retry")
+		}
+	}
 	var history sessionRecord
 	if e := s.db.Get(runCtx, "session", req.SessionID, &history); e == nil {
 		if history.Platform != req.Platform || history.UserID != req.UserID {
@@ -505,9 +545,20 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 		}
 	} else if !errors.Is(e, sql.ErrNoRows) {
 		return result, e
+	} else if req.Retry {
+		history = sessionRecord{ID: req.SessionID, Platform: req.Platform, UserID: req.UserID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	}
 	if history.ID == "" {
 		history = sessionRecord{ID: req.SessionID, Platform: req.Platform, UserID: req.UserID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	}
+	if req.Platform == "telegram" && !req.Retry && strings.TrimSpace(req.Prompt) != "" {
+		owner := req.RetryUserID
+		if owner == "" {
+			owner = req.UserID
+		}
+		if _, err := s.beginTelegramAttempt(runCtx, req.SessionID, owner, req.Prompt); err != nil {
+			return result, err
+		}
 	}
 	personaID, persona, err := s.resolvePersona(runCtx, req.PersonaID, history)
 	if err != nil {
@@ -515,14 +566,21 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	}
 	history.PersonaID, history.PersonaSelected = personaID, true
 	incoming := append([]hatch.Message(nil), req.Messages...)
-	if req.Prompt != "" {
+	if req.Retry {
+		if len(incoming) != 0 || req.Prompt != "" || len(req.Attachments) != 0 {
+			return result, errors.New("retry request must not contain new input")
+		}
+		req.Prompt = retryState.Prompt
+		incoming = []hatch.Message{{Role: "user", Content: req.Prompt}}
+	} else if req.Prompt != "" {
 		duplicate := len(incoming) > 0 && (incoming[len(incoming)-1].Role == "" || incoming[len(incoming)-1].Role == "user") && strings.TrimSpace(incoming[len(incoming)-1].Content) == strings.TrimSpace(req.Prompt)
 		if !duplicate {
 			incoming = append(incoming, hatch.Message{Role: "user", Content: req.Prompt})
 		}
 	}
 	req.Messages = append(append([]hatch.Message(nil), history.Messages...), incoming...)
-	history.Messages = append(history.Messages, incoming...)
+	// History is committed only after generation succeeds. An explicit retry is
+	// a new turn; it never deletes another sender's earlier successful answer.
 	history.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	if history.Title == "" {
 		history.Title = req.Prompt
@@ -573,6 +631,7 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 		if e != nil {
 			return e
 		}
+		history.Messages = append(history.Messages, incoming...)
 		history.Messages = append(history.Messages, hatch.Message{Role: "assistant", Content: result.Text})
 		history.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		if e := s.db.Put(runCtx, "session", history.ID, history, nil); e != nil {

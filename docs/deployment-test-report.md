@@ -8,6 +8,14 @@
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
+## v0.1.28 Telegram 会话可靠性修复（待同提交 CI/Release）
+
+- Telegram `/new` 指针数据库为唯一来源并串行更新；旧群聊历史迁移时保留原创建者授权并改为 chat owner。
+- retry 改用每 sender attempt ID 快照，过期快照拒绝；重复文本不会覆盖之前成功回合，失败/取消不写历史。`sessions.reset` 失效 retry 和命令缓存。
+- core lease 扫描停止同 chat 的所有活跃 session；有界 polling worker 使生成中 `/stop` 可处理。重复 Webhook command 结果按 chat/message key 持久化。取消生成会尝试用独立短 context 删除空 placeholder。
+- 群组 `/cmd@bot` 可选 `telegram.bot_username` 目标校验；目标不匹配忽略，无目标命令保持可用。
+- 本轮测试和本地验证通过；独立最终 review 会话异常中止，因此明确不声称有独立 review pass。CI、race/govulncheck 和正式 Release/Windows artifact 待提交后验证。
+
 ## v0.1.27 运行时配置修复（已发布）
 
 - 已补齐账号节点绑定、分池、备注与默认/显式人设，新增会话人设选择持久化，WebUI、CLI、API 与 Telegram 命令接入相同服务。
@@ -16,7 +24,8 @@
 - Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 成功；Windows amd64/386/arm64 和 Linux amd64/386/arm64/arm GOARM7 全部通过构建和发布。
 - 下载 Windows amd64 正式产物，sidecar 和 `SHA256SUMS` 均校验通过，SHA-256 `f3d74612d533c508260e32550180ce94024c4a4d626cb0e8283b8f08fc0a2c1b`。以该正式产物实际启动隔离服务，设密、Schema、State 脱敏、API key、缺失文件 404 和嵌入 UI HTTP 通过。
 - 测试使用合成凭证、本地代理与可控生成接口，验证真实调用参数和副作用，不代表真实 Muse/Telegram E2E 成功；本机无 gcc，race 以同提交 Ubuntu CI 为准。
-- 剩余已知功能缺口：节点自动选优/故障切换、周期探活/冷却策略、部分运行时限流设置、Telegram `/new` 会话指针与 `/retry`、真实多媒体/贴纸出站、视觉视频处理、通过 Muse 生成的定时内容、告警和完整浏览器视觉验收仍需继续完成。不能把本补丁当作原任务书全部验收通过。
+- Telegram `/new`、按发送者隔离的 `/retry`、重试 attempt ID、`/stop` 跨会话停止、Webhook 命令幂等与群组目标用户名过滤已由本地 adapter/core/channel 模拟测试覆盖；未提供真实 Bot token，未进行外部 Telegram E2E。
+- 剩余已知功能缺口：节点自动选优/故障切换、周期探活/冷却策略、部分运行时限流设置、真实多媒体/贴纸出站、视觉视频处理、通过 Muse 生成的定时内容、告警和完整浏览器视觉验收仍需继续完成。不能把本补丁当作原任务书全部验收通过。
 
 ## 本地自动化结果
 

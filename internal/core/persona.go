@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,13 +82,24 @@ func (s *Service) SetSessionPersona(ctx context.Context, id, platform, userID, p
 }
 
 func (s *Service) TelegramPersonas(ctx context.Context, sessionID, userID, selection string) (string, error) {
+	chatID := telegramChatIDFromSession(sessionID)
+	if chatID == 0 {
+		return "", errors.New("invalid Telegram session")
+	}
+	var pointer telegramSessionRecord
+	if err := s.db.Get(ctx, "telegram_session", telegramSessionKey(chatID), &pointer); err != nil || pointer.SessionID != sessionID {
+		return "", errors.New("Telegram session is unavailable")
+	}
 	selection = strings.TrimSpace(selection)
 	if selection != "" {
+		if strconv.FormatInt(pointer.UserID, 10) != userID {
+			return "人设切换失败：只有创建该会话的用户可以切换人设。", nil
+		}
 		id := selection
 		if id == "none" {
 			id = "_none"
 		}
-		_, err := s.SetSessionPersona(ctx, sessionID, "telegram", userID, id)
+		_, err := s.SetSessionPersona(ctx, sessionID, "telegram", strconv.FormatInt(chatID, 10), id)
 		if err != nil {
 			return "人设切换失败：请确认 ID 有效、预设已启用，并停止当前生成。", nil
 		}

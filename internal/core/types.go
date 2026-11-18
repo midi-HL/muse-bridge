@@ -9,14 +9,17 @@ type Upload struct {
 }
 
 type ChatRequest struct {
-	SessionID   string          `json:"session_id"`
-	Platform    string          `json:"platform"`
-	UserID      string          `json:"user_id"`
-	Prompt      string          `json:"prompt"`
-	Model       string          `json:"model"`
-	PersonaID   string          `json:"persona_id"`
-	Attachments []Upload        `json:"attachments,omitempty"`
-	Messages    []hatch.Message `json:"messages,omitempty"`
+	SessionID      string          `json:"session_id"`
+	Platform       string          `json:"platform"`
+	UserID         string          `json:"user_id"`
+	Prompt         string          `json:"prompt"`
+	Model          string          `json:"model"`
+	PersonaID      string          `json:"persona_id"`
+	Retry          bool            `json:"-"`
+	RetryUserID    string          `json:"-"`
+	RetryAttemptID string          `json:"-"`
+	Attachments    []Upload        `json:"attachments,omitempty"`
+	Messages       []hatch.Message `json:"messages,omitempty"`
 }
 
 type File struct {

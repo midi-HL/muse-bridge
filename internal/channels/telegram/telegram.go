@@ -17,6 +17,7 @@ import (
 )
 
 var ErrUnsupported = errors.New("telegram: operation unsupported by upstream protocol")
+var ErrBusy = errors.New("telegram: chat is busy")
 var ErrNotConfigured = errors.New("telegram: bot token is not configured")
 
 type Request struct {
@@ -24,13 +25,14 @@ type Request struct {
 	UserID                         int64
 	ChatType, Username, Name, Text string
 	MessageID, ThreadID            int
+	SessionID                      string
 	Attachments                    []media.Attachment
 }
 type Response struct {
 	Text        string
 	Attachments []media.Attachment
 }
-type Command struct{ Name, Args string }
+type Command struct{ Name, Args, Target string }
 type Delivery struct {
 	Kind, Text string
 	MessageID  int
@@ -56,6 +58,13 @@ type StickerImportReport struct {
 	Imported int                    `json:"imported"`
 	Failed   []StickerImportFailure `json:"failed,omitempty"`
 }
+
+// SessionBinder lets stateful adapters bind an update to the session selected
+// when the update was accepted, before any network side effect or async delay.
+type SessionBinder interface {
+	BindSession(context.Context, Request) (Request, error)
+}
+
 type Handler interface {
 	Chat(context.Context, Request, func(string) error) (Response, error)
 	Command(context.Context, Request, Command) (Response, error)
@@ -317,12 +326,13 @@ type update struct {
 	} `json:"message"`
 }
 type Channel struct {
-	client    *Client
-	handler   Handler
-	whitelist map[int64]bool
-	mode      string
-	poll      time.Duration
-	mu        sync.Mutex
+	client      *Client
+	handler     Handler
+	whitelist   map[int64]bool
+	mode        string
+	botUsername string
+	poll        time.Duration
+	mu          sync.Mutex
 }
 
 func New(cfg map[string]any, h Handler) (*Channel, error) {
@@ -332,6 +342,9 @@ func New(cfg map[string]any, h Handler) (*Channel, error) {
 		return nil, e
 	}
 	ch := &Channel{client: c, handler: h, mode: "polling", poll: 1 * time.Second, whitelist: map[int64]bool{}}
+	if name, ok := cfg["telegram.bot_username"].(string); ok {
+		ch.botUsername = strings.TrimPrefix(strings.TrimSpace(name), "@")
+	}
 	if m, ok := cfg["telegram.mode"].(string); ok {
 		ch.mode = m
 	}
@@ -344,6 +357,30 @@ func New(cfg map[string]any, h Handler) (*Channel, error) {
 	}
 	return ch, nil
 }
+
+// parseTelegramCommand also accepts group commands addressed to this bot.
+func parseTelegramCommand(text string) (Command, bool) {
+	parts := strings.Fields(text)
+	if len(parts) == 0 || !strings.HasPrefix(parts[0], "/") {
+		return Command{}, false
+	}
+	raw := strings.TrimPrefix(parts[0], "/")
+	name, target := raw, ""
+	if at := strings.IndexByte(raw, '@'); at >= 0 {
+		name, target = raw[:at], strings.TrimPrefix(raw[at+1:], "@")
+		if target == "" {
+			return Command{}, false
+		}
+	}
+	if name == "" {
+		return Command{}, false
+	}
+	return Command{Name: strings.ToLower(name), Target: strings.ToLower(target), Args: strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text), parts[0]))}, true
+}
+
+// Run never waits for a model response before polling a stop command. Long
+// operations are bounded and registered before dispatch, so an immediately
+// following stop can cancel them even before their goroutine starts.
 func (ch *Channel) Run(ctx context.Context) error {
 	ch.mu.Lock()
 	mode := ch.mode
@@ -351,7 +388,19 @@ func (ch *Channel) Run(ctx context.Context) error {
 	if mode != "polling" {
 		return errors.New("telegram: webhook mode requires WebhookHandler")
 	}
+	runCtx, cancel := context.WithCancel(ctx)
+	var jobs sync.WaitGroup
+	defer func() { cancel(); jobs.Wait() }()
+	type pendingJob struct {
+		cancel context.CancelFunc
+		token  *struct{ n byte }
+	}
+	pending := map[int64]pendingJob{}
+	var pendingMu sync.Mutex
 	for {
+		if runCtx.Err() != nil {
+			return runCtx.Err()
+		}
 		ch.mu.Lock()
 		mode = ch.mode
 		client := ch.client
@@ -359,49 +408,148 @@ func (ch *Channel) Run(ctx context.Context) error {
 		if mode != "polling" || client == nil {
 			return nil
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
 		ch.mu.Lock()
 		offset := client.offset
 		ch.mu.Unlock()
-		v, e := client.call(ctx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(offset, 10)}})
-		if e != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+		raw, err := client.call(runCtx, "getUpdates", url.Values{"timeout": {"25"}, "offset": {strconv.FormatInt(offset, 10)}})
+		if err != nil {
+			if runCtx.Err() != nil {
+				return runCtx.Err()
 			}
-			time.Sleep(ch.poll)
+			timer := time.NewTimer(ch.poll)
+			select {
+			case <-timer.C:
+			case <-runCtx.Done():
+				timer.Stop()
+				return runCtx.Err()
+			}
 			continue
 		}
 		var items []update
-		_ = json.Unmarshal(v, &items)
+		if json.Unmarshal(raw, &items) != nil {
+			return errors.New("telegram: invalid update response")
+		}
 		for _, u := range items {
+			if !ch.acceptsUpdate(u) {
+				ch.mu.Lock()
+				if ch.client == client {
+					client.offset = u.UpdateID + 1
+				}
+				ch.mu.Unlock()
+				continue
+			}
+			command, isCommand := parseTelegramCommand(u.Message.Text)
+			req, bindErr := ch.bindUpdate(runCtx, u)
+			if bindErr != nil {
+				_, _ = client.Send(runCtx, u.Message.Chat.ID, "无法确定当前会话，请稍后重试。", false)
+				ch.mu.Lock()
+				if ch.client == client {
+					client.offset = u.UpdateID + 1
+				}
+				ch.mu.Unlock()
+				continue
+			}
+			long := !isCommand || command.Name == "retry"
+			if long {
+				pendingMu.Lock()
+				_, busy := pending[u.Message.Chat.ID]
+				full := len(pending) >= 8
+				if busy || full {
+					pendingMu.Unlock()
+					if _, err = client.Send(runCtx, u.Message.Chat.ID, "当前聊天或服务正在生成，请稍后重试；可发送 /stop 停止。", false); err != nil {
+						break
+					}
+				} else {
+					jobCtx, jobCancel := context.WithCancel(runCtx)
+					token := &struct{ n byte }{1}
+					pending[u.Message.Chat.ID] = pendingJob{cancel: jobCancel, token: token}
+					jobs.Add(1)
+					go func(item Request) {
+						defer jobs.Done()
+						defer jobCancel()
+						defer func() {
+							pendingMu.Lock()
+							if current, ok := pending[item.ChatID]; ok && current.token == token {
+								delete(pending, item.ChatID)
+							}
+							pendingMu.Unlock()
+						}()
+						_ = ch.handleRequest(jobCtx, item)
+					}(req)
+					pendingMu.Unlock()
+				}
+			} else {
+				if command.Name == "stop" {
+					pendingMu.Lock()
+					if job, ok := pending[u.Message.Chat.ID]; ok {
+						job.cancel()
+					}
+					pendingMu.Unlock()
+				}
+				if err = ch.handleRequest(runCtx, req); err != nil && !errors.Is(err, ErrUnsupported) {
+					break
+				}
+			}
 			ch.mu.Lock()
 			if ch.client == client {
-				ch.client.offset = u.UpdateID + 1
+				client.offset = u.UpdateID + 1
 			}
 			ch.mu.Unlock()
-			_ = ch.HandleUpdate(ctx, u)
 		}
 	}
 }
+func (ch *Channel) requestFromUpdate(u update) Request {
+	return Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
+}
+
+// acceptsUpdate is a pure preflight: rejecting an update must not create a
+// persistent Telegram chat pointer or any other session state.
+func (ch *Channel) acceptsUpdate(u update) bool {
+	ch.mu.Lock()
+	allowed, botUsername := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID], ch.botUsername
+	ch.mu.Unlock()
+	if !allowed {
+		return false
+	}
+	command, ok := parseTelegramCommand(u.Message.Text)
+	return !ok || command.Target == "" || (botUsername != "" && strings.EqualFold(command.Target, botUsername))
+}
+
+func (ch *Channel) bindUpdate(ctx context.Context, u update) (Request, error) {
+	r := ch.requestFromUpdate(u)
+	ch.mu.Lock()
+	handler := ch.handler
+	ch.mu.Unlock()
+	if binder, ok := handler.(SessionBinder); ok {
+		return binder.BindSession(ctx, r)
+	}
+	return r, nil
+}
 func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
+	if !ch.acceptsUpdate(u) {
+		return nil
+	}
+	r, err := ch.bindUpdate(ctx, u)
+	if err != nil {
+		return err
+	}
+	return ch.handleRequest(ctx, r)
+}
+func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 	ch.mu.Lock()
 	client := ch.client
 	handler := ch.handler
-	allowed := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID]
+	botUsername := ch.botUsername
+	allowed := len(ch.whitelist) == 0 || ch.whitelist[r.UserID]
 	ch.mu.Unlock()
 	if !allowed || client == nil || handler == nil {
 		return nil
 	}
-	r := Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
-	if strings.HasPrefix(r.Text, "/") {
-		parts := strings.Fields(r.Text)
-		name := strings.TrimPrefix(parts[0], "/")
-		args := strings.TrimSpace(strings.TrimPrefix(r.Text, parts[0]))
-		resp, e := handler.Command(ctx, r, Command{Name: name, Args: args})
+	if command, ok := parseTelegramCommand(r.Text); ok {
+		if command.Target != "" && (botUsername == "" || !strings.EqualFold(command.Target, botUsername)) {
+			return nil
+		}
+		resp, e := handler.Command(ctx, r, command)
 		if e != nil {
 			return e
 		}
@@ -424,10 +572,7 @@ func (ch *Channel) HandleUpdate(ctx context.Context, u update) error {
 		_ = stream.Abort(ctx)
 		return e
 	}
-	if err := stream.Close(ctx, resp.Text); err != nil {
-		return err
-	}
-	return nil
+	return stream.Close(ctx, resp.Text)
 }
 func (ch *Channel) WebhookHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -440,7 +585,16 @@ func (ch *Channel) WebhookHandler() http.Handler {
 			http.Error(w, "bad update", 400)
 			return
 		}
-		if e := ch.HandleUpdate(r.Context(), u); e != nil && !errors.Is(e, ErrUnsupported) {
+		if !ch.acceptsUpdate(u) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		bound, bindErr := ch.bindUpdate(r.Context(), u)
+		if bindErr != nil {
+			http.Error(w, "update failed", 500)
+			return
+		}
+		if e := ch.handleRequest(r.Context(), bound); e != nil && !errors.Is(e, ErrUnsupported) {
 			http.Error(w, "update failed", 500)
 			return
 		}
@@ -465,6 +619,10 @@ func (ch *Channel) Reload(ctx context.Context, cfg map[string]any) error {
 	ch.client = c
 	if m, ok := cfg["telegram.mode"].(string); ok {
 		ch.mode = m
+	}
+	ch.botUsername = ""
+	if username, ok := cfg["telegram.bot_username"].(string); ok {
+		ch.botUsername = strings.TrimPrefix(strings.TrimSpace(username), "@")
 	}
 	ch.whitelist = map[int64]bool{}
 	if raw, ok := cfg["telegram.whitelist"].(string); ok {

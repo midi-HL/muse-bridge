@@ -14,6 +14,10 @@ $env:MUSE_SETUP_TOKEN = "use-a-long-random-one-time-setup-token"
 
 `MUSE_MASTER_KEY` 必须是 base64 编码的 32 字节密钥。主密钥丢失时，SQLite 中的加密 cookie、管理员秘密和 API key 无法恢复。数据目录默认是当前目录 `data`，文件权限按 0700/0600 创建。Windows 请把数据目录放在用户私有目录并限制 ACL。
 
+## `telegram.bot_username` 可选，用于校验群聊中的 `/stop@bot`、`/new@bot` 等目标命令；未配置时带 `@目标` 的命令会被忽略，避免误执行给其他机器人发送的命令。长轮询会有界分派生成请求，使生成期间 `/stop` 仍可处理。
+
+Telegram `/new` 的当前 chat 会话会持久化并在重启后恢复；`/retry` 按发送者的 attempt ID 重试最近一次输入，生成失败仍可重试，相同文本不会覆盖之前成功回合。Webhook 重投同一 command 更新会复用缓存结果。
+
 ## 环境变量与配置
 
 默认地址为 `127.0.0.1:8787`，`MUSE_ADDR` 覆盖监听地址。`MUSE_DATA_DIR` 覆盖数据目录，`MUSE_CONFIG` 指向 YAML 配置；`MUSE_SETUP_TOKEN` 控制首次远程设密；`MUSE_MASTER_KEY` 是必填主密钥。配置字段、默认值、范围和 secret 标记由 `/schema` 返回。普通设置可放 YAML 或 `MUSE_<GROUP>_<NAME>` 环境变量，secret 只从环境变量或加密存储读入；状态和日志只返回 `configured/masked`，不会返回明文。
@@ -65,7 +69,7 @@ CLI 服务地址默认是 `http://127.0.0.1:8787`；远程明文 HTTP 被拒绝�
 
 账号支持 `node_id`、`pool`（`shared`/`chat`/`api`）与 `note`。开启 `pool.split` 后，Web/Telegram 使用 chat 或 shared 账号，外部 API/CLI 聊天使用 api 或 shared 账号；关闭后共用所有可用账号。绑定节点失效会拒绝使用该账号，不会自动绕过绑定直连。节点或 Cookie 更新在当前请求结束后生效；更新显示名称或备注不会打断生成。重复导入同 ID Cookie 保留未明确提供的账号配置与启停状态。
 
-人设预设保存正文后，可在聊天页选择、CLI 使用 `--persona ID`，或 Telegram 使用 `/persona ID`。`_none` 表示关闭预设（Telegram 用 `/persona none`）；未指定时，新会话使用 `persona.default_id`，后续消息保留该会话的选择。OpenAI 兼容接口支持可选扩展字段 `persona_id`，管理 action 为 `sessions.persona`。人设只是引导，无法移除 Muse 自带系统提示词；本地自动化验证不代表真实 Muse 一定遵循人设。
+人设预设保存正文后，可在聊天页选择、CLI 使用 `--persona ID`，或 Telegram 使用 `/persona ID`。`_none` 表示关闭预设（Telegram 用 `/persona none`）；未指定时，新会话使用 `persona.default_id`，后续消息保留该会话的选择。OpenAI 兼容接口支持可选扩展字段 `persona_id`，管理 action 为 `sessions.persona`。人设只是引导，无法移除 Muse 自带系统提示词；本地自动化验证不代表真实 Muse 一定遵循人设。Telegram `/new` 会持久化当前 chat 的会话指针，`/retry` 会按发送者的 attempt ID 重试最近一次请求（包含首次生成失败的情况），失败不会污染历史；长轮询生成期间 `/stop` 仍可到达。
 
 ## 能力限制
 

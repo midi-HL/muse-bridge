@@ -41,6 +41,14 @@
 - 下载测试先复现未知/虚报 Content-Length 超限仍返回成功、流读取失败返回部分数据、错误携带 URL、DNS 不受总期限约束、继承环境代理等问题。修复后实际字节限制、取消、地址固定、重定向拒绝及资源关闭用例通过。
 - 备份中合法旧绝对路径与新相对路径均覆盖测试；备份不含媒体字节，缺少字节的记录保持不可下载。独立审查指出跨数据目录旧备份迁移被拒，新增失败用例后修复为仅按受限旧文件布局取 basename 重定位到当前根目录，不访问旧路径；复验通过。此处未声称备份所有业务类型都具备完整事务隔离。
 
+## v0.1.28 Telegram 会话、重试和轮询修复
+
+- `/new` 指针由数据库作为唯一来源并按 chat 串行写入；旧 `telegram_<chatID>` 群聊首次访问时迁移历史 owner 到 chat ID，同时保留原创建者用于人设授权。
+- 普通 Telegram 请求在 core 会话 lease 后记录 sender-specific attempt ID；`/retry` 必须携带仍然有效的 attempt snapshot。重试总是追加独立 turn，不按 prompt 文本裁剪历史，因此相同文本不会覆盖其他成功回答；reset 清除 retry 和命令结果。
+- `/stop` 通过 core 扫描该 chat 的实际 lease，`/new` 后仍能停止旧生成。长轮询改为有界异步任务分派，控制命令可在生成中到达；取消会清理空 placeholder。`/command@other_bot` 在配置 bot username 时被忽略，匹配目标才执行。
+- Webhook command 以 `(chat_id,message_id)` 持久化结果；重复投递复用结果，reset 与完成写回共享互斥，避免旧结果覆盖 invalidated tombstone。
+- Telegram session/retry/command records 纳入备份 allowlist；新增 backup round-trip、migration、stale retry、same-text multi-sender、polling stop、target filtering 和 placeholder cleanup tests。
+
 ## v0.1.27 账号路由与人设修复
 
 - 账号的 `node_id/pool/note` 原先只在界面提交，调度端没有对应字段；现已持久化并实际参与代理选择和分池。代理测试使用本地 HTTP 代理观察 bootstrap 请求，覆盖重启与节点 URL 更新；没有使用真实 Cookie 或外部节点。
@@ -49,7 +57,8 @@
 - WebUI 实际组件测试覆盖人设选择、失败重试、定时刷新、异步切会话和生成期间禁用；CLI、OpenAI、简单 API、Web 与 Telegram 命令入口有行为测试。没有据此宣称浏览器视觉或真实 Muse 服从预设通过。
 - 独立审查发现重复导入同 ID 会清空绑定/分池/备注并启用停用账号。新增失败测试后修为原子 Cookie 刷新，只有显式字段才改动；HTTP 与 core 测试均通过。
 - 第二轮审查发现只改备注也会关闭正在使用的 client。真实延迟代理请求先复现 note/node/cookie 三种更新导致取消，再修为连接重建延后到当前请求完成；旧请求不能覆盖新凭证。两项 P2 经独立只读复审均关闭（verdict: pass）。
-- 本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 HTTP 启动冒烟已通过；CI [44265763306](https://github.com/midi-HL/muse-bridge/actions/runs/44265763306)（同源码提交）中 format/web/vet/unit/race/govulncheck/build 全过，Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 七平台全过。
+- 本轮本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 diff 检查通过。独立最终 reviewer 会话多次异常终止，故不记录为独立最终 review pass；此前各 finding 按实际复现测试修复并在指定范围复验。
+- v0.1.27 本地 `go vet ./...`、完整 Go 测试、前端 12 项行为测试、纯 Go 构建与 HTTP 启动冒烟已通过；CI [44265763306](https://github.com/midi-HL/muse-bridge/actions/runs/44265763306)（同源码提交）中 format/web/vet/unit/race/govulncheck/build 全过，Release [44283876645](https://github.com/midi-HL/muse-bridge/actions/runs/44283876645) 七平台全过。
 
 ## 残余风险和诚实限制
 
