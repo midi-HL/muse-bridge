@@ -470,5 +470,18 @@ func (ch *Channel) Reload(ctx context.Context, cfg map[string]any) error {
 	_ = ctx
 	return nil
 }
-func (ch *Channel) Client() *Client { return ch.client }
+
+// SendText sends one scheduled or administrative text without exposing the Bot API client.
+func (ch *Channel) SendText(ctx context.Context, chatID int64, text string) error {
+	ch.mu.Lock()
+	client := ch.client
+	ch.mu.Unlock()
+	if client == nil {
+		return ErrNotConfigured
+	}
+	_, err := client.Send(ctx, chatID, MarkdownHTML(text), true)
+	return err
+}
+
+func (ch *Channel) Client() *Client { ch.mu.Lock(); defer ch.mu.Unlock(); return ch.client }
 func (ch *Channel) Close() error    { return nil }

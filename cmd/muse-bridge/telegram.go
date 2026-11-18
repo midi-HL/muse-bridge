@@ -168,6 +168,24 @@ func (r *telegramRuntime) stopLocked() error {
 	return nil
 }
 
+func (r *telegramRuntime) sendScheduled(ctx context.Context, job core.ScheduleExecution) error {
+	if job.Platform != "telegram" {
+		return errors.New("scheduled platform is not connected")
+	}
+	chatID, err := strconv.ParseInt(strings.TrimSpace(job.Target), 10, 64)
+	if err != nil || chatID == 0 {
+		return errors.New("scheduled Telegram target is invalid")
+	}
+	r.mu.Lock()
+	ch := r.ch
+	mode := r.mode
+	r.mu.Unlock()
+	if ch == nil || mode == "" {
+		return telegram.ErrNotConfigured
+	}
+	return ch.SendText(ctx, chatID, job.Prompt)
+}
+
 func (r *telegramRuntime) registerWebhookLocked() error {
 	if r.ch == nil {
 		return errors.New("telegram: channel is not initialized")

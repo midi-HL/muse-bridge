@@ -85,6 +85,11 @@ func serve(ctx context.Context, args []string) error {
 	telegramRuntime := newTelegramRuntime(ctx, service)
 	defer telegramRuntime.close()
 	service.SetSettingsHook(telegramRuntime.apply)
+	service.SetScheduleCallback(func(job core.ScheduleExecution, _ time.Time) {
+		if err := telegramRuntime.sendScheduled(ctx, job); err != nil {
+			_ = service.Log(context.Background(), "error", "scheduled delivery failed (schedule_id="+job.ID+"): "+err.Error())
+		}
+	})
 	auth := admin.NewAuth(db, os.Getenv("MUSE_SETUP_TOKEN"))
 	if !loopback && auth.SetupRequired(ctx) && os.Getenv("MUSE_SETUP_TOKEN") == "" {
 		return errors.New("first setup on a non-loopback listener requires MUSE_SETUP_TOKEN")
