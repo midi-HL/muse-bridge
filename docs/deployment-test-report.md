@@ -16,11 +16,12 @@
 - CI [44385505102](https://github.com/midi-HL/muse-bridge/actions/runs/44385505102) 对提交 `fab3b91d8fc277b8cc53064c3e7ea9070346cf7e` 的 format/web/vet/unit/race/govulncheck/build 全过。Release [44385833238](https://github.com/midi-HL/muse-bridge/actions/runs/44385833238) 七平台 build/publish 全过。
 - Windows amd64 正式产物 sidecar 和 `SHA256SUMS` 双校验通过，SHA-256 `bf47a335c139e58c7ee5550aeef3e34251227ba90bd501e5761fb48b6dd36cd9`，HTTP smoke 通过。Telegram 外部 Bot E2E 未执行。
 
-## 当前未发布 Telegram 会话修复（本地已验证）
+## v0.1.29/v0.1.30 Telegram 会话可靠性修复（已发布）
 
-- `/new` pointer/旧群聊迁移/retry attempt ID/失败历史不污染、reset 清理、webhook command 幂等、bounded polling `/stop`、target bot preflight 和 update-session binding 已加入当前工作树。
-- 两项修复后审查发现的 finding（reset tombstone 写回竞态、白名单过滤前绑定会话）均已复现并修复；Webhook bind-before-state 的定向审查通过。完整独立终审会话异常中止，最终整体 review verdict 不可得，不声称完整独立审查通过。
-- 本地完整 Go/vet/build、Node 12 项及 diff check 通过；最近修复后的 exact commit 尚未提交，尚无对应 CI 或 Release，因此不能称其已发布。
+- Telegram 源码提交 `7972113c2afedb6dc946caa17af317b4d233524b` 已进入 v0.1.29 tag 且包含于 v0.1.30；v0.1.30 tag `fab3b91d8fc277b8cc53064c3e7ea9070346cf7e` 的 CI [44385505102](https://github.com/midi-HL/muse-bridge/actions/runs/44385505102) 与 Release [44385833238](https://github.com/midi-HL/muse-bridge/actions/runs/44385833238) 成功。七平台资产均已发布。
+- `/new` 持久会话、旧群聊迁移、按 sender 隔离的 retry attempt ID、reset 失效、same-text retry、不覆盖其他成功回合、持久 command idempotency、bounded polling `/stop`、bind-before-async session capture、白名单/bot target preflight、取消后 placeholder 清理均有定向自动化覆盖。
+- Windows/386 backup ID 问题随后在 `fab3b91` 修复，定向 stress 50 次通过；其 Windows amd64 正式产物 SHA-256 为 `bf47a335c139e58c7ee5550aeef3e34251227ba90bd501e5761fb48b6dd36cd9`，已做隔离 HTTP 启动 smoke。
+- 最新本地 `go vet`、全库 tests、Node 12 项和纯 Go build 通过。最终独立 review agent 异常中止；定向 reviewer 曾复核 webhooks filter-before-bind pass，最终整体独立 verdict 不可得，不声称完整独立 review pass。真实 Telegram Bot token 未提供，无外部 E2E。
 
 
 ## v0.1.27 运行时配置修复（已发布）
