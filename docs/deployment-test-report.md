@@ -2,13 +2,21 @@
 
 ## 版本与环境
 
-- 最新稳定版 v0.1.32 支持 Telegram 群聊按提及或回复触发，并记录发言人。[发布页](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.32)
+- 最新稳定版 v0.1.33 提供 Telegram 本地会话列表、切换、改名和历史命令。[发布页](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.33)
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
 - 本轮文件安全补丁：`v0.1.26`，源码提交 `d6cd64e44d55ad13a845a202a7998c828658bd6f`。CI [44242271552](https://github.com/midi-HL/muse-bridge/actions/runs/44242271552) 的格式、vet、单元测试、race、漏洞检查、构建全部通过；Release [44242561924](https://github.com/midi-HL/muse-bridge/actions/runs/44242561924) 七平台及发布通过。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
+
+## v0.1.33 Telegram 本地会话管理
+
+- `/sessions [页码]` 每页显示当前聊天的 8 个本地会话。`/switch ID` 切换当前聊天，`/rename 名称` 仅允许原创建者改名，`/history` 展示最近 10 条用户和 Muse 消息。切换影响整个群聊，不能查看或选择其他聊天的记录。
+- 模拟 Webhook 与实际 core 测试覆盖创建者恢复、参数错误、分页、匿名权限、数据库关闭重开后的选择和 `/retry`、备份恢复空会话与创建者。独立审查指出的无创建者旧历史被认领、执行中改名与重置冲突、匿名管理员共享身份三项问题均先复现再修复，最终复审为 pass；已知创建者的旧私聊仍保持兼容。
+- 源码提交 `a85119086587c9e654fc7898107c0a5c3aaf0145` 的本地全量 Go 测试、`vet`、12 项前端测试、纯 Go 构建和 Windows 386 定向回归通过。同一提交的 CI 格式、单元测试、竞态检测、漏洞扫描和构建均通过，七个平台及 publish 全过。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44427737414) · [发布工作流](https://github.com/midi-HL/muse-bridge/actions/runs/44427965649)
+- 正式 Windows amd64 产物 SHA-256 为 `b99b759011f9fbc2b4b63c0ec4990dcabab987ae407d4bfd47777e86f14bd04c`，与单文件校验值及 `SHA256SUMS` 一致。隔离启动、首次设密、管理 Schema、密钥脱敏、API key 认证、缺失文件 404 和嵌入 WebUI 的 HTTP 冒烟通过。[下载 Windows amd64](https://github.com/midi-HL/muse-bridge/releases/download/v0.1.33/muse-bridge-windows-amd64.exe)
+- 本地会话命令不提供 Muse 官方客户端的远端会话列表。真实 Telegram 与 Muse E2E 仍待具备对应凭证后验收。
 
 ## v0.1.32 Telegram 群聊
 

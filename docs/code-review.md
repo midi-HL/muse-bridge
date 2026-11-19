@@ -71,6 +71,13 @@
 - 模拟 Webhook 和实际 core 集成测试覆盖发言人标识进入模型输入与成功历史、失败后 `/retry` 复用原发言人标识。两轮独立审查均通过，真实 Telegram 群聊与 Muse 回复待验收。
 - `go vet ./...`、全库 Go 单测、12 项前端测试、纯 Go 构建及 Windows 386 定向回归通过。同一源码提交 `583912eb76b0822426faf6d4d00fdaeef38bf8e3` 的 CI 竞态检测和漏洞扫描通过。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44420770764)
 
+## v0.1.33 Telegram 本地会话命令
+
+- 新增 `/sessions`、`/switch`、`/rename`、`/history`，只读取当前聊天的本地数据。会话选择、已知创建者和空会话信息随指针持久化；新目录备份恢复和真实数据库关闭重开均有测试。
+- 独立审查确认三项 P2：无创建者旧历史首次访问会被认领，待执行改名可与成功重置交错，匿名管理员共享兼容发送者 ID 会混淆个人权限。均增加失败测试后修复。已知创建者的旧私聊继续保留权限。最终独立复审为 pass，未发现锁序反转。
+- 本地 `go test -count=1 -timeout=90s ./...`、`go vet ./...`、前端 12 项行为测试、纯 Go 构建、Windows 386 定向回归通过。同一源码提交 `a85119086587c9e654fc7898107c0a5c3aaf0145` 的竞态检测、漏洞扫描及七平台发布均通过。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44427737414) · [Release](https://github.com/midi-HL/muse-bridge/actions/runs/44427965649)
+- 真实 Telegram 账户与远端 Muse 会话验收未执行；不得将本地命令等同于未确认的远端协议能力。
+
 ## 残余风险和诚实限制
 
 - 没有在 CI 或仓库使用真实 Muse Cookie，因此真实 Muse、Telegram Bot、ASR 云端和节点环境的 E2E 未被伪造为通过。
