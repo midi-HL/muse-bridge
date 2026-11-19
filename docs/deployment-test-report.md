@@ -2,13 +2,19 @@
 
 ## 版本与环境
 
-- 最新稳定版 v0.1.33 提供 Telegram 本地会话列表、切换、改名和历史命令。[发布页](https://github.com/midi-HL/muse-bridge/releases/tag/v0.1.33)
+- 最新稳定版 v0.1.36 统一 WebUI 布局、滚动和选择控件，并修复 Telegram 开关/白名单/长消息、并发首次设密、ASR 热更新与 CLI 等问题。完整范围与验证见 [本轮复查记录](ui-backend-review-2026-11-19.md)。
 
 - 仓库：`midi-HL/muse-bridge`
 - 文件安全补丁基线：`v0.1.25`；Go 工具链为 `1.27.4`。
 - 本轮文件安全补丁：`v0.1.26`，源码提交 `d6cd64e44d55ad13a845a202a7998c828658bd6f`。CI [44242271552](https://github.com/midi-HL/muse-bridge/actions/runs/44242271552) 的格式、vet、单元测试、race、漏洞检查、构建全部通过；Release [44242561924](https://github.com/midi-HL/muse-bridge/actions/runs/44242561924) 七平台及发布通过。历史标签并非全部构建成功，不以标签存在代替验收通过。
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
+
+## v0.1.36 WebUI 与后端复查（已发布并更新本机）
+
+- 源码 `90c1ac99a40dfe3d36524e4d86732631c18f8e24`；CI `44560045330`、七平台 Release `44560713641` 全部通过。Node 17 项、本机串行全库 Go/vet/纯 Go build 通过；56 组桌面/手机尺寸、深浅主题的合成页面检查及首条流式消息、主题与刷新回归通过。
+- Windows amd64 SHA-256 `c30a2b09e3fd211fed2cec7aaa66bc4ce41e958e559c77b14e74266051ceeab4` 与 sidecar、SHA256SUMS 一致，正式产物隔离 smoke 通过。已替换本机运行版本并验证新版 UI 资源、原密码登录及账号配置保留；升级前的程序、数据库、保护密钥副本已备份。
+- 新 Cookie 的 JSON 与请求头导出属于同一账号，只导入一次，旧四个账号保留停用。两种导出均单独经当前 Hatch 包诊断，分别约 32.1 秒、31.5 秒返回 `pending_vm/connect`（上游工作区未运行），没有将其解释为凭证失效。Telegram 保持开启及原 token，但启用的白名单为空，因此新版不会响应未知用户。未宣称真实模型聊天、真实 Bot 或媒体验收通过。
 
 ## v0.1.35 Telegram `/usage`（已发布）
 

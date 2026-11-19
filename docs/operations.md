@@ -35,6 +35,10 @@
 
 ## 限流、排队和计数
 
+`telegram.enabled=false` 会停止平台运行；`telegram.whitelist_enabled=true` 且名单为空时不会接收任何用户。启用后应在平台页填写本人或允许用户的 Telegram 数字 ID；关闭白名单时不再按保留的名单过滤。此开关与名单保存后均参与热重载。
+
+备份导入如果返回 `requires_restart:true`，表示恢复了账号或运行配置，须重启服务后应用这些运行态数据；界面会给出明确提示。其他仅从数据库读取的记录无需因此重启。
+
 - `limits.daily_per_user` 在身份、会话归属、人设、附件和最终提示词本地校验并取得并发准入令牌后扣额；额度提交后的上游失败或超时也计一次，0 表示不限。Web `/chat` 按管理员身份，CLI/OpenAI 兼容 API 按已认证 API key ID，Telegram 按发送者 ID 计数；匿名 Telegram 消息按 chat ID。API key 自身的 RPM/Daily 限额和用量另行计数，在 HTTP 请求结构校验之后、进入 Core 前扣记；Core 每用户每日额度与该 key 限额互相独立。
 - 每日额度和查询共用 `general.timezone` 的本地日期（时区变更后新周期名也改变）。超限请求返回稳定限流错误，在模型调用及成功历史写入之前拒绝。
 - `limits.concurrency` 和 `limits.queue_size` 是运行时生效的 FIFO 聊天准入设置。并发更新不取消已有请求；缩小时不驱逐已有排队者，但拒绝新排队请求。队列满返回 `queue_full`；等待者取消会退出队列并归还令牌。Web/API SSE 和 Telegram 流式接口发出非对话排队状态，状态不进入 prompt、用户历史或日额度。
