@@ -31,9 +31,20 @@ type Keys struct {
 	mu       sync.Mutex
 	redactor *secure.Redactor
 	Timezone func() string
+	now      func() time.Time
 }
 
 func NewKeys(db *store.Store, r *secure.Redactor) *Keys { return &Keys{db: db, redactor: r} }
+func (k *Keys) currentTime() time.Time {
+	if k.now != nil {
+		return k.now()
+	}
+	return time.Now()
+}
+
+// SetClockForTesting stabilizes RPM/day counter boundary tests.
+func (k *Keys) SetClockForTesting(now func() time.Time) { k.now = now }
+
 func (k *Keys) day() string {
 	loc := time.UTC
 	if k.Timezone != nil {
@@ -41,7 +52,7 @@ func (k *Keys) day() string {
 			loc = l
 		}
 	}
-	return time.Now().In(loc).Format("2006-01-02")
+	return k.currentTime().In(loc).Format("2006-01-02")
 }
 func (k *Keys) List(ctx context.Context) ([]APIKey, error) {
 	rows, e := k.db.List(ctx, "api_key")
@@ -60,6 +71,10 @@ func (k *Keys) List(ctx context.Context) ([]APIKey, error) {
 	}
 	return out, nil
 }
+func (k *Keys) Validate(ctx context.Context, token string) (APIKey, error) {
+	return k.authenticate(ctx, token)
+}
+
 func (k *Keys) Action(ctx context.Context, name string, args map[string]any) (any, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -123,6 +138,19 @@ func keyLimits(args map[string]any) (int, int, error) {
 	return rpm, daily, nil
 }
 func (k *Keys) Authenticate(ctx context.Context, token string, charge bool) (APIKey, error) {
+	item, err := k.authenticate(ctx, token)
+	if err != nil {
+		return APIKey{}, err
+	}
+	if charge {
+		if err := k.Charge(ctx, item); err != nil {
+			return APIKey{}, err
+		}
+	}
+	return item, nil
+}
+
+func (k *Keys) authenticate(ctx context.Context, token string) (APIKey, error) {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if len(token) > 256 || !strings.HasPrefix(token, "mbk_") {
@@ -141,18 +169,26 @@ func (k *Keys) Authenticate(ctx context.Context, token string, charge bool) (API
 		return APIKey{}, errors.New("invalid API key")
 	}
 	k.redactor.Add(token)
-	if charge {
-		minute := time.Now().UTC().Format("2006-01-02T15:04")
-		if _, e := k.db.Increment(ctx, "api_minute", item.ID, minute, item.RPM); e != nil {
-			return APIKey{}, e
-		}
-		if _, e := k.db.Increment(ctx, "api_day", item.ID, k.day(), item.Daily); e != nil {
-			return APIKey{}, e
-		}
-		if _, e := k.db.Increment(ctx, "api_total", item.ID, "all", 0); e != nil {
-			return APIKey{}, e
-		}
-	}
 	return item, nil
+}
+
+func (k *Keys) Charge(ctx context.Context, item APIKey) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	var current APIKey
+	var secret keySecret
+	if err := k.db.Get(ctx, "api_key", item.ID, &current); err != nil || current.Revoked || k.db.Secret(ctx, "api_key", item.ID, &secret) != nil {
+		return errors.New("invalid API key")
+	}
+	if _, err := k.db.Increment(ctx, "api_minute", item.ID, k.currentTime().UTC().Format("2006-01-02T15:04"), current.RPM); err != nil {
+		return err
+	}
+	if _, err := k.db.Increment(ctx, "api_day", item.ID, k.day(), current.Daily); err != nil {
+		return err
+	}
+	if _, err := k.db.Increment(ctx, "api_total", item.ID, "all", 0); err != nil {
+		return err
+	}
+	return nil
 }
 func stringArg(m map[string]any, k string) string { s, _ := m[k].(string); return s }

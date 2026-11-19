@@ -66,18 +66,49 @@ func (r *telegramRuntime) sameConfig(cfg telegramConfig) bool {
 }
 
 func (h *telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
+	return h.ChatWithStatus(ctx, r, emit, nil)
+}
+
+func (h *telegramServiceHandler) ChatWithStatus(ctx context.Context, r telegram.Request, emit func(string) error, status func(context.Context, string) error) (telegram.Response, error) {
 	session, err := h.currentSession(ctx, r)
 	if err != nil {
 		return telegram.Response{}, err
 	}
 	owner := strconv.FormatInt(r.ChatID, 10)
-	result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: owner, Prompt: telegramPrompt(r), RetryUserID: strconv.FormatInt(r.UserID, 10)}, func(ev core.ChatEvent) error {
-		if ev.Type == "text" && ev.Text != "" && emit != nil {
-			return emit(ev.Text)
-		}
-		return nil
-	})
-	return telegram.Response{Text: result.Text}, err
+	req := core.ChatRequest{
+		SessionID:   session,
+		Platform:    "telegram",
+		UserID:      owner,
+		Prompt:      telegramPrompt(r),
+		RetryUserID: strconv.FormatInt(r.UserID, 10),
+		QueueStatus: func(runCtx context.Context, text string) error {
+			if status == nil {
+				return nil
+			}
+			notifyCtx, cancel := context.WithTimeout(runCtx, 2*time.Second)
+			defer cancel()
+			return status(notifyCtx, text)
+		},
+	}
+	generate := func() (string, error) {
+		result, err := h.service.Chat(ctx, req, func(ev core.ChatEvent) error {
+			if ev.Type == "text" && ev.Text != "" && emit != nil {
+				return emit(ev.Text)
+			}
+			return nil
+		})
+		return result.Text, err
+	}
+	var answer string
+	if r.UpdateID > 0 {
+		answer, err = h.service.TelegramMessageOnce(ctx, r.ChatID, r.UpdateID, r.MessageID, r.UserID, session, generate)
+	} else {
+		answer, err = generate()
+	}
+	if message := core.ChatLimitMessage(err); message != "" {
+		return telegram.Response{Text: message}, nil
+	}
+	return telegram.Response{Text: answer}, err
 }
 
 func telegramPrompt(r telegram.Request) string {
@@ -139,6 +170,9 @@ func (h *telegramServiceHandler) command(ctx context.Context, r telegram.Request
 			return telegram.Response{Text: "没有可重试的上一条请求。"}, nil
 		}
 		result, err := h.service.Chat(ctx, core.ChatRequest{SessionID: session, Platform: "telegram", UserID: strconv.FormatInt(r.ChatID, 10), RetryUserID: strconv.FormatInt(r.UserID, 10), RetryAttemptID: attemptID, Retry: true}, nil)
+		if message := core.ChatLimitMessage(err); message != "" {
+			return telegram.Response{Text: message}, nil
+		}
 		return telegram.Response{Text: result.Text}, err
 	case "stop":
 		return telegram.Response{Text: map[bool]string{true: "已请求停止当前聊天的生成。", false: "当前没有正在生成的请求。"}[h.service.StopTelegramChat(r.ChatID)]}, nil

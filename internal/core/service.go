@@ -4,7 +4,6 @@ package core
 import (
 	"context"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,14 +30,13 @@ type Service struct {
 	dataDir            string
 	fileRoot           *os.Root
 	settingsMu         sync.RWMutex
+	settingsUpdateMu   sync.Mutex
 	settings           map[string]any
 	settingsHook       func(map[string]any) error
 	pool               *pool.Pool
 	generate           func(context.Context, *hatch.Client, hatch.GenerateRequest, func(hatch.Event) error) (hatch.GenerateResult, error)
 	media              *media.Processor
-	gate               chan struct{}
-	queueMu            sync.Mutex
-	queued             int
+	admission          *chatAdmission
 	sessionsMu         sync.Mutex
 	sessions           map[string]context.CancelFunc
 	telegramSessionMu  sync.Mutex
@@ -121,10 +119,6 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		cancel()
 		return nil, err
 	}
-	concurrency := settingInt(settings, "limits.concurrency", 2)
-	if concurrency < 1 {
-		concurrency = 1
-	}
 	base := hatch.Config{}
 	if v, ok := overrides["hatch.base_url"].(string); ok {
 		base.BaseURL = v
@@ -152,7 +146,7 @@ func New(ctx context.Context, db *store.Store, vault *secure.Vault, redactor *se
 		_ = p.Close()
 		return nil, errors.New("cannot open generated file directory")
 	}
-	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, fileRoot: fileRoot, settings: settings, pool: p, media: mp, gate: make(chan struct{}, concurrency), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
+	s := &Service{life: life, cancel: cancel, db: db, vault: vault, redactor: redactor, dataDir: dataDir, fileRoot: fileRoot, settings: settings, pool: p, media: mp, admission: newChatAdmission(settingInt(settings, "limits.concurrency", 2), settingInt(settings, "limits.queue_size", 20)), sessions: map[string]context.CancelFunc{}, scheduleRuns: map[string]bool{}}
 	s.generate = func(ctx context.Context, client *hatch.Client, req hatch.GenerateRequest, emit func(hatch.Event) error) (hatch.GenerateResult, error) {
 		return client.Generate(ctx, req, emit)
 	}
@@ -273,35 +267,54 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		if err := config.Validate(vals); err != nil {
 			return nil, err
 		}
-		s.settingsMu.Lock()
-		previous := cloneAnyMap(s.settings)
-		for k, v := range vals {
-			s.settings[k] = v
-		}
-		out := cloneAnyMap(s.settings)
-		hook := s.settingsHook
-		s.settingsMu.Unlock()
-		if err := persistSettings(ctx, s.db, out); err != nil {
-			s.settingsMu.Lock()
-			s.settings = previous
-			s.settingsMu.Unlock()
+		s.settingsUpdateMu.Lock()
+		defer s.settingsUpdateMu.Unlock()
+		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		s.settingsMu.RLock()
+		previous := cloneAnyMap(s.settings)
+		hook := s.settingsHook
+		s.settingsMu.RUnlock()
+		out := cloneAnyMap(previous)
+		for k, v := range vals {
+			out[k] = v
+		}
+		rollback := func(cause error) (any, error) {
+			var restoreErr error
+			if hook != nil {
+				restoreErr = hook(cloneAnyMap(previous))
+			}
+			restoreCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			dbErr := persistSettings(restoreCtx, s.db, previous)
+			cancel()
+			if restoreErr != nil || dbErr != nil {
+				return nil, errors.Join(cause, restoreErr, dbErr)
+			}
+			return nil, cause
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		// Persist first so a failed/cancelled write cannot stop a live poller.
+		if err := persistSettings(ctx, s.db, out); err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
 		if hook != nil {
-			// Hooks are internal runtime adapters (Telegram reload, schedulers),
-			// not API output. They need the raw values to apply secret settings;
-			// callers still receive only the masked map below.
-			if err := hook(out); err != nil {
-				s.settingsMu.Lock()
-				s.settings = previous
-				s.settingsMu.Unlock()
-				_ = persistSettings(ctx, s.db, previous)
-				// Best effort to restore any external runtime adapter that may
-				// have partially applied the rejected settings.
-				_ = hook(previous)
-				return nil, err
+			if err := hook(cloneAnyMap(out)); err != nil {
+				return rollback(err)
 			}
 		}
+		if err := ctx.Err(); err != nil {
+			return rollback(err)
+		}
+		s.settingsMu.Lock()
+		s.settings = out
+		s.admission.update(settingInt(out, "limits.concurrency", 2), settingInt(out, "limits.queue_size", 20))
+		s.settingsMu.Unlock()
 		return publicSettings(out), nil
 	case "accounts", "accounts.list":
 		return s.pool.List(), nil
@@ -445,6 +458,11 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		defer s.sessionsMu.Unlock()
 		s.telegramCommandMu.Lock()
 		defer s.telegramCommandMu.Unlock()
+		if chatPending, err := s.telegramChatPendingLocked(id); err != nil {
+			return nil, err
+		} else if chatPending {
+			return nil, errors.New("Telegram message processing is in progress")
+		}
 		if deliveryPending, err := s.telegramCommandDeliveryPendingLocked(id); err != nil {
 			return nil, err
 		} else if deliveryPending {
@@ -459,6 +477,9 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 			return nil, errors.New("session is generating")
 		}
 		if err := s.invalidateTelegramRetries(ctx, id); err != nil {
+			return nil, err
+		}
+		if err := s.invalidateTelegramChats(ctx, id); err != nil {
 			return nil, err
 		}
 		if err := s.invalidateTelegramCommands(ctx, id); err != nil {
@@ -503,6 +524,9 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 }
 
 func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent) error) (ChatResult, error) {
+	if _, err := chatDailySubject(req); err != nil {
+		return ChatResult{SessionID: req.SessionID}, err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -527,7 +551,14 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	timeout := time.Duration(settingInt(s.Settings(), "limits.request_timeout_seconds", 300)) * time.Second
 	runCtx, timer := context.WithTimeout(runCtx, timeout)
 	defer timer()
-	if err := s.acquire(runCtx); err != nil {
+	if err := s.admission.acquire(runCtx, func() error {
+		if req.QueueStatus != nil {
+			_ = req.QueueStatus(runCtx, "当前服务繁忙，正在排队，请稍候。")
+		} else if emit != nil {
+			_ = emit(ChatEvent{Type: "queued", Text: "当前服务繁忙，正在排队，请稍候。", SessionID: req.SessionID})
+		}
+		return nil
+	}); err != nil {
 		return ChatResult{SessionID: req.SessionID}, err
 	}
 	defer s.release()
@@ -562,15 +593,6 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	if history.ID == "" {
 		history = sessionRecord{ID: req.SessionID, Platform: req.Platform, UserID: req.UserID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	}
-	if req.Platform == "telegram" && !req.Retry && strings.TrimSpace(req.Prompt) != "" {
-		owner := req.RetryUserID
-		if owner == "" {
-			owner = req.UserID
-		}
-		if _, err := s.beginTelegramAttempt(runCtx, req.SessionID, owner, req.Prompt); err != nil {
-			return result, err
-		}
-	}
 	personaID, persona, err := s.resolvePersona(runCtx, req.PersonaID, history)
 	if err != nil {
 		return result, err
@@ -590,6 +612,21 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 		}
 	}
 	req.Messages = append(append([]hatch.Message(nil), history.Messages...), incoming...)
+	if err := PrepareChatRequest(&req, persona); err != nil {
+		return result, err
+	}
+	if err := s.chargeDailyChat(runCtx, req); err != nil {
+		return result, err
+	}
+	if req.Platform == "telegram" && !req.Retry && strings.TrimSpace(req.Prompt) != "" {
+		owner := req.RetryUserID
+		if owner == "" {
+			owner = req.UserID
+		}
+		if _, err := s.beginTelegramAttempt(runCtx, req.SessionID, owner, req.Prompt); err != nil {
+			return result, err
+		}
+	}
 	// History is committed only after generation succeeds. An explicit retry is
 	// a new turn; it never deletes another sender's earlier successful answer.
 	history.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -602,15 +639,8 @@ func (s *Service) Chat(ctx context.Context, req ChatRequest, emit func(ChatEvent
 	split, _ := s.Settings()["pool.split"].(bool)
 	err = s.pool.WithClientFor(runCtx, req.Platform, split, func(c *hatch.Client, _ pool.Account) error {
 		hs := make([]hatch.Attachment, 0, len(req.Attachments))
-		for _, u := range req.Attachments {
-			data, e := base64.StdEncoding.DecodeString(u.DataBase64)
-			if e != nil {
-				return errors.New("invalid attachment encoding")
-			}
-			if len(data) > 64<<20 {
-				return errors.New("attachment exceeds 64 MiB")
-			}
-			a, e := c.Upload(runCtx, data, u.MIME, u.Filename)
+		for _, u := range req.validatedUploads {
+			a, e := c.Upload(runCtx, u.Data, u.MIME, u.Filename)
 			if e != nil {
 				return e
 			}
@@ -677,30 +707,9 @@ func (s *Service) materialize(ctx context.Context, c *hatch.Client, a hatch.Atta
 	}
 	return s.storeGeneratedFile(ctx, a.Filename, a.MIME, data, platform, userID)
 }
-func (s *Service) acquire(ctx context.Context) error {
-	s.queueMu.Lock()
-	qmax := settingInt(s.Settings(), "limits.queue_size", 20)
-	if qmax >= 0 && s.queued >= qmax+cap(s.gate) {
-		s.queueMu.Unlock()
-		return errors.New("request queue is full")
-	}
-	s.queued++
-	s.queueMu.Unlock()
-	select {
-	case s.gate <- struct{}{}:
-		s.queueMu.Lock()
-		s.queued--
-		s.queueMu.Unlock()
-		return nil
-	case <-ctx.Done():
-		s.queueMu.Lock()
-		s.queued--
-		s.queueMu.Unlock()
-		return ctx.Err()
-	}
-}
-func (s *Service) release()        { <-s.gate }
-func (s *Service) queueDepth() int { s.queueMu.Lock(); defer s.queueMu.Unlock(); return s.queued }
+func (s *Service) acquire(ctx context.Context) error { return s.admission.acquire(ctx, nil) }
+func (s *Service) release()                          { s.admission.release() }
+func (s *Service) queueDepth() int                   { _, queued := s.admission.snapshot(); return queued }
 func settingInt(m map[string]any, k string, d int) int {
 	switch v := m[k].(type) {
 	case int:

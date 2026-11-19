@@ -16,7 +16,7 @@ import (
 // fields and historically optional metadata while validating fields that define
 // ownership, identity, and the store key.
 func validateTelegramBackupRecord(row backupRecord) error {
-	if row.Kind != "telegram_session" && row.Kind != "telegram_retry" && row.Kind != "telegram_command" {
+	if row.Kind != "telegram_session" && row.Kind != "telegram_retry" && row.Kind != "telegram_command" && row.Kind != "telegram_chat" {
 		return nil
 	}
 	fields, err := decodeTelegramBackupObject(row.Data)
@@ -71,6 +71,22 @@ func validateTelegramBackupRecord(row backupRecord) error {
 		case "pending", "done", "failed", "invalidated":
 		default:
 			return errors.New("invalid Telegram command status")
+		}
+	case "telegram_chat":
+		if err := requireTelegramBackupFields(fields, "chat_id", "update_id", "message_id", "user_id", "session_id", "status"); err != nil {
+			return err
+		}
+		var rec telegramChatRecord
+		if err := json.Unmarshal(row.Data, &rec); err != nil {
+			return fmt.Errorf("invalid Telegram chat record: %w", err)
+		}
+		if rec.ChatID == 0 || rec.UpdateID <= 0 || rec.MessageID <= 0 || !validTelegramSessionForChat(rec.SessionID, rec.ChatID) || row.ID != telegramChatKey(rec.ChatID, rec.UpdateID) {
+			return errors.New("invalid Telegram chat update identity")
+		}
+		switch rec.Status {
+		case "done", "failed", "invalidated":
+		default:
+			return errors.New("invalid Telegram chat update status; pending updates cannot be restored")
 		}
 	}
 	return nil

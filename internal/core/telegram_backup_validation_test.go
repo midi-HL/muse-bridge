@@ -67,6 +67,7 @@ func TestValidateTelegramBackupRecordRejectsMalformedIdentityAndShape(t *testing
 		{"command wrong status", backupRecord{Kind: "telegram_command", ID: commandID, Data: json.RawMessage(`{"session_id":"telegram_42","chat_id":42,"user_id":7,"message_id":17,"command":"retry","status":"unknown","updated_at":"2026-01-01T00:00:00Z"}`)}},
 		{"session chat mismatch", backupRecord{Kind: "telegram_session", ID: "chat_42", Data: json.RawMessage(`{"chat_id":7,"user_id":9,"session_id":"telegram_7","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}`)}},
 		{"retry key mismatch", backupRecord{Kind: "telegram_retry", ID: "telegram_42:wrong", Data: json.RawMessage(`{"session_id":"telegram_42","owner":"sender-1","attempt_id":"attempt","prompt":"retry me","updated_at":"2026-01-01T00:00:00Z"}`)}},
+		{"chat pending orphan", backupRecord{Kind: "telegram_chat", ID: telegramChatKey(42, 91), Data: json.RawMessage(`{"chat_id":42,"update_id":91,"message_id":9,"user_id":7,"session_id":"telegram_42","status":"pending","updated_at":"2026-01-01T00:00:00Z"}`)}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -149,6 +149,47 @@ test('persona selector is locked while generation is active',async()=>{
   assert.equal(findByLabel(h.root,'人设').disabled,false);
 });
 
+const queueStatus='当前服务繁忙，正在排队，请稍候。';
+for(const {name,terminal,expectedStatus,expectedMessage,notice} of [
+  {name:'error',terminal:{type:'error',error:{code:'timeout',message:'Request timed out'},text:'Request timed out'},expectedStatus:'生成失败',expectedMessage:'生成失败: Request timed out',notice:'Request timed out'},
+  {name:'server cancellation',terminal:{type:'error',error:{code:'cancelled',message:'Request cancelled'},text:'Request cancelled'},expectedStatus:'已停止生成',expectedMessage:'已停止生成'},
+  {name:'stream abort',terminal:new DOMException('The operation was aborted','AbortError'),expectedStatus:'已停止生成',expectedMessage:'已停止生成'},
+]){
+  test(`createChat replaces queue status after ${name}`,async()=>{
+    const queued=deferred(),finish=deferred(),encoder=new TextEncoder();
+    const frame=event=>encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+    let sentStatus=false;
+    const response=new Response(new ReadableStream({
+      async pull(controller){
+        if(!sentStatus){
+          sentStatus=true;
+          controller.enqueue(frame({type:'status',text:queueStatus}));
+          return;
+        }
+        // The next read starts after the component has processed the status event.
+        queued.resolve();
+        await finish.promise;
+        if(terminal instanceof Error){controller.error(terminal);return;}
+        controller.enqueue(frame(terminal));
+        controller.close();
+      },
+    },{highWaterMark:0}),{headers:{'Content-Type':'text/event-stream'}});
+    const h=await createHarness({chat:()=>response});
+    const status=h.root.querySelector('.composer-status');
+    const sending=submit(h.root);
+    await queued.promise;
+    assert.equal(status.textContent,queueStatus);
+    assert.equal(h.root.querySelector('textarea').disabled,true);
+
+    finish.resolve();
+    await sending;
+    assert.equal(status.textContent,expectedStatus);
+    assert.equal(h.root.querySelector('textarea').disabled,false);
+    assert.equal(h.root.querySelectorAll('.message-body').at(-1).textContent,expectedMessage);
+    assert.deepEqual(h.notices,notice?[{message:notice,error:true}]:[]);
+  });
+}
+
 test('history refresh started before send cannot overwrite the sent transcript',async()=>{
   const pending=deferred();
   const h=await createHarness({history:()=>pending.promise});

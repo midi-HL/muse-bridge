@@ -250,6 +250,20 @@ func (c *client) request(ctx context.Context, method, path string, body any, api
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		defer resp.Body.Close()
+		if api && resp.StatusCode == http.StatusTooManyRequests && (path == "/api/chat" || path == "/api/chat/stream") {
+			const limit = 64 << 10
+			b, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+			if err == nil && len(b) <= limit {
+				var failure struct {
+					Error json.RawMessage `json:"error"`
+				}
+				if json.Unmarshal(b, &failure) == nil {
+					if err := chatLimitError(failure.Error); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		return nil, fmt.Errorf("service returned HTTP %d; check authorization, input or feature support", resp.StatusCode)
 	}
 	return resp, nil
@@ -633,7 +647,10 @@ func (r Runner) chat(ctx context.Context, c *client, args []string) error {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		var event core.ChatEvent
+		var event struct {
+			core.ChatEvent
+			Error json.RawMessage `json:"error"`
+		}
 		if json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event) != nil {
 			return errors.New("invalid stream event")
 		}
@@ -643,6 +660,9 @@ func (r Runner) chat(ctx context.Context, c *client, args []string) error {
 				return e
 			}
 		case "error":
+			if err := chatLimitError(event.Error); err != nil {
+				return err
+			}
 			return errors.New("generation failed; check service account availability")
 		case "done":
 			done = true
@@ -654,6 +674,22 @@ func (r Runner) chat(ctx context.Context, c *client, args []string) error {
 	_, e = fmt.Fprintln(r.Out)
 	return e
 }
+func chatLimitError(raw json.RawMessage) error {
+	// Only recognized codes select a message. Server-supplied text stays private.
+	var detail struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(raw, &detail) == nil {
+		switch detail.Code {
+		case "daily_limit":
+			return errors.New("daily chat request limit reached")
+		case "queue_full":
+			return errors.New("request queue is full; retry later")
+		}
+	}
+	return nil
+}
+
 func privateRead(path string, limit int64) ([]byte, error) {
 	f, e := os.Open(path)
 	if e != nil {

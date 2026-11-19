@@ -78,6 +78,14 @@
 - 本地 `go test -count=1 -timeout=90s ./...`、`go vet ./...`、前端 12 项行为测试、纯 Go 构建、Windows 386 定向回归通过。同一源码提交 `a85119086587c9e654fc7898107c0a5c3aaf0145` 的竞态检测、漏洞扫描及七平台发布均通过。[CI](https://github.com/midi-HL/muse-bridge/actions/runs/44427737414) · [Release](https://github.com/midi-HL/muse-bridge/actions/runs/44427965649)
 - 真实 Telegram 账户与远端 Muse 会话验收未执行；不得将本地命令等同于未确认的远端协议能力。
 
+## v0.1.34 聊天限流、动态排队与 Telegram 重投
+
+- 修复运行时 `limits.daily_per_user` 未执行、并发/队列设置只在启动时生效的问题。身份由入口强制；API key RPM/Daily、Core per-user daily 分开计数。附件 Base64 在 Core 解码一次并缓存，cache 绑定原始编码；Hatch 的模型/完整提示词界限在额度提交前校验。
+- 修复 queue/update 和取消边界：FIFO permit 有取消结算状态；SSE 每帧写 deadline 后清除；Telegram 只显示 queued event，status 编辑使用请求 context 且限 2 秒，失败不终止生成。settings.update 对锁后/调用 hook 前/调用 hook 后都检查取消；先持久化，再切换 Telegram 运行时 adapter，hook 失败用独立限时上下文回滚；API key counters 在请求结构与附件元数据校验后 charge。
+- Telegram update_id 按稳定 chat/update/message/sender 身份去重，红elivery使用缓存结果，不因 `/new` 或 `/switch` 重新绑定当前 session 而重生成。reset 会将关联记录标为 invalidated 并清除缓存文本；备份边界校验新记录类型。
+- 修复前独立审查定位 API 路由漏记 API key RPM/Daily、完整提示词超限先扣聊天额度、HTTP附件重复解码、settings hook 失败可影响活动轮询、普通 Webhook 重投重复扣额、reset 后重放旧回答、reset 与 pending update 竞态、孤儿 pending 备份以及 SSE 写 deadline 到期。对应回归均新增并通过；最终独立复审的最后 P2 为 pending 备份恢复，已改为导入拒绝并由回归锁定。
+- 本地全库 Go、vet、Node 15 项与纯 Go 构建通过；`go test -race` 因本机 CGO/C 编译器不可用未执行，待 CI。当前仍未提交、未推送、未建标签；真实 Telegram/Muse E2E 未执行。
+
 ## 残余风险和诚实限制
 
 - 没有在 CI 或仓库使用真实 Muse Cookie，因此真实 Muse、Telegram Bot、ASR 云端和节点环境的 E2E 未被伪造为通过。

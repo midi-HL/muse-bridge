@@ -16,6 +16,41 @@ const maxEventLine = 1 << 20
 // full response before invoking emit. emit must return promptly and must not call
 // Generate recursively; returning an error stops delivery. Cancel context to stop
 // waiting locally. Neither cancellation nor stream reset proves remote compute stopped.
+func effectivePrompt(req GenerateRequest, model string) string {
+	prompt := buildPrompt(req)
+	switch model {
+	case "muse-image":
+		if len(req.Attachments) > 0 {
+			return "基于我本次上传附带的参考素材进行生图/编辑，输出一张图片：" + prompt
+		}
+		return "全新文生图创作（当前未提供任何参考图，请勿查找历史相册或向用户索要原图，直接根据文字描述从零绘制生成一张全新图片）：" + prompt
+	case "muse-video":
+		if len(req.Attachments) > 0 {
+			return "基于我本次上传的参考素材生成视频（只使用本次上传的这些附件）：" + prompt
+		}
+		return "全新文生视频创作（纯文本全新生成）：生成一个视频（时长严格为 6 秒）：" + prompt
+	default:
+		return prompt
+	}
+}
+
+func ValidateGenerateRequest(req GenerateRequest) error {
+	model := req.Model
+	if model == "" {
+		model = "muse-spark"
+	}
+	if model != "muse-spark" && model != "gpt-4o-mini" && model != "muse-image" && model != "muse-video" {
+		return fault("unsupported", "generate", "model is not supported")
+	}
+	if len(req.Attachments) > 10 {
+		return fault("unsupported", "generate", "at most ten reference attachments are supported")
+	}
+	if len(effectivePrompt(req, model)) > maxEventLine {
+		return fault("protocol", "generate", "prompt exceeds size limit")
+	}
+	return nil
+}
+
 func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Event) error) (result GenerateResult, err error) {
 	ctx, cancel := c.operation(ctx, 10*time.Minute)
 	defer cancel()
@@ -35,25 +70,10 @@ func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Ev
 		err = fault("unsupported", "generate", "at most ten reference attachments are supported")
 		return
 	}
-	prompt := buildPrompt(req)
-	if len(prompt) > maxEventLine {
-		err = fault("protocol", "generate", "prompt exceeds size limit")
+	if err = ValidateGenerateRequest(req); err != nil {
 		return
 	}
-	if model == "muse-image" {
-		if len(req.Attachments) > 0 {
-			prompt = "基于我本次上传附带的参考素材进行生图/编辑，输出一张图片：" + prompt
-		} else {
-			prompt = "全新文生图创作（当前未提供任何参考图，请勿查找历史相册或向用户索要原图，直接根据文字描述从零绘制生成一张全新图片）：" + prompt
-		}
-	}
-	if model == "muse-video" {
-		if len(req.Attachments) > 0 {
-			prompt = "基于我本次上传的参考素材生成视频（只使用本次上传的这些附件）：" + prompt
-		} else {
-			prompt = "全新文生视频创作（纯文本全新生成）：生成一个视频（时长严格为 6 秒）：" + prompt
-		}
-	}
+	prompt := effectivePrompt(req, model)
 	if req.NodeID == "" {
 		req.NodeID = newID()
 	}

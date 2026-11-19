@@ -10,6 +10,15 @@
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
+## v0.1.34 聊天限流、排队与 Telegram 重投保护
+
+- 新增 `limits.daily_per_user` 的持久化计数，按可信 Web/API/Telegram 身份及 `general.timezone` 本地日期隔离；0 不限。通过身份、会话、人设、完整提示词及附件本地校验并获得并发准入后计一次，上游失败仍计。API key 自身 RPM/Daily 仍独立计数。
+- `limits.concurrency`/`limits.queue_size` 热更新为 FIFO 准入；排队取消释放等待位，Web/API SSE 与 Telegram 显示独立 queue state，不进入 prompt/history。CLI stream 和 non-stream 对 `daily_limit`/`queue_full` 显示固定、无服务端文本回显的错误。
+- Telegram 同一 update_id 有持久结果，普通 Webhook/轮询重投不重复生成或扣聊天额度。sessions.reset 会将该会话的 update 记录清空响应文本并标记 invalidated。若 Telegram 已接受响应而进程在本地提交 delivered/result 前退出，仍可能重复展示已接受输出。
+- 回归覆盖 API key RPM/Daily 与伪造身份、跨 API 端点共用额度、Web admin 限额、Telegram sender 跨群隔离与 retry、相同 webhook update 重投（含 `/new` 后重投）、reset 失效及 pending update reset 冲突、拒绝导入孤儿 pending 备份、并发调整/取消、提示词与附件校验、持久化重启和空时区 UTC。额外 stress：Core 限额/队列重复 50 次，HTTP API 额度重复 20 次，Telegram replay/跨群额度重复 10 次，Telegram reset/backup 边界重复 20 次。
+- 本机 Windows amd64：`gofmt`、`go vet ./...`、`go test -count=1 -timeout=90s ./...`、Node 15 项、`CGO_ENABLED=0 go build` 与 `git diff --check` 全通过。`go test -race` 未能运行：本机 CGO/C 编译器未启用；需依赖 CI runner 的竞态检查。
+- 尚未创建本版本提交/标签，亦未运行 GitHub CI 或 Release。无真实 Telegram Bot/Muse 凭证，真实端到端仍待部署机验证。
+
 ## v0.1.33 Telegram 本地会话管理
 
 - `/sessions [页码]` 每页显示当前聊天的 8 个本地会话。`/switch ID` 切换当前聊天，`/rename 名称` 仅允许原创建者改名，`/history` 展示最近 10 条用户和 Muse 消息。切换影响整个群聊，不能查看或选择其他聊天的记录。

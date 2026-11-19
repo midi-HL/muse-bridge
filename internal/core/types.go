@@ -1,6 +1,10 @@
 package core
 
-import "github.com/midi-HL/muse-bridge/internal/hatch"
+import (
+	"context"
+
+	"github.com/midi-HL/muse-bridge/internal/hatch"
+)
 
 type Upload struct {
 	Filename   string `json:"filename"`
@@ -8,18 +12,27 @@ type Upload struct {
 	DataBase64 string `json:"data_base64"`
 }
 
+type validatedChatUpload struct {
+	Encoded  string
+	Data     []byte
+	MIME     string
+	Filename string
+}
+
 type ChatRequest struct {
-	SessionID      string          `json:"session_id"`
-	Platform       string          `json:"platform"`
-	UserID         string          `json:"user_id"`
-	Prompt         string          `json:"prompt"`
-	Model          string          `json:"model"`
-	PersonaID      string          `json:"persona_id"`
-	Retry          bool            `json:"-"`
-	RetryUserID    string          `json:"-"`
-	RetryAttemptID string          `json:"-"`
-	Attachments    []Upload        `json:"attachments,omitempty"`
-	Messages       []hatch.Message `json:"messages,omitempty"`
+	SessionID        string                              `json:"session_id"`
+	Platform         string                              `json:"platform"`
+	UserID           string                              `json:"user_id"`
+	Prompt           string                              `json:"prompt"`
+	Model            string                              `json:"model"`
+	PersonaID        string                              `json:"persona_id"`
+	Retry            bool                                `json:"-"`
+	RetryUserID      string                              `json:"-"`
+	RetryAttemptID   string                              `json:"-"`
+	QueueStatus      func(context.Context, string) error `json:"-"`
+	validatedUploads []validatedChatUpload
+	Attachments      []Upload        `json:"attachments,omitempty"`
+	Messages         []hatch.Message `json:"messages,omitempty"`
 }
 
 type File struct {

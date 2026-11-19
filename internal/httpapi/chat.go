@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -97,12 +98,19 @@ func (s *Server) simpleChat(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
 		return
 	}
-	key, ok := s.apiKey(w, r, true)
+	key, ok := s.validateAPIKey(w, r)
 	if !ok {
 		return
 	}
 	var b core.ChatRequest
 	if !decode(w, r, &b, 64<<20) || !validateChat(w, &b) {
+		return
+	}
+	if err := core.ValidateAttachmentMetadata(b.Attachments); err != nil {
+		failure(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	if !s.chargeAPIKey(w, r, key) {
 		return
 	}
 	b.Platform = "api"
@@ -137,16 +145,20 @@ func sseHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 }
 func sse(w http.ResponseWriter, v any) error {
-	b, e := json.Marshal(v)
-	if e != nil {
-		return e
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
 	}
-	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(30 * time.Second))
-	_, e = fmt.Fprintf(w, "data: %s\n\n", b)
-	if e == nil {
-		e = http.NewResponseController(w).Flush()
+	controller := http.NewResponseController(w)
+	_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+	_, err = fmt.Fprintf(w, "data: %s\n\n", b)
+	if err == nil {
+		err = controller.Flush()
 	}
-	return e
+	if clearErr := controller.SetWriteDeadline(time.Time{}); err == nil && !errors.Is(clearErr, http.ErrNotSupported) {
+		err = clearErr
+	}
+	return err
 }
 func (s *Server) streamChat(w http.ResponseWriter, r *http.Request, b core.ChatRequest) {
 	if _, ok := w.(http.Flusher); !ok {
@@ -179,7 +191,7 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request) {
 	if !method(w, r, http.MethodPost) {
 		return
 	}
-	key, ok := s.apiKey(w, r, true)
+	key, ok := s.validateAPIKey(w, r)
 	if !ok {
 		return
 	}
@@ -207,6 +219,9 @@ func (s *Server) completions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateChat(w, &req) {
+		return
+	}
+	if !s.chargeAPIKey(w, r, key) {
 		return
 	}
 	id := "chatcmpl-" + secure.ID()

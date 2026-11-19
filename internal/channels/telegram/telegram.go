@@ -26,6 +26,7 @@ type Request struct {
 	ChatType, Username, Name, Text string
 	MessageID, ThreadID            int
 	SessionID                      string
+	UpdateID                       int64
 	Attachments                    []media.Attachment
 }
 type Response struct {
@@ -513,7 +514,9 @@ func (ch *Channel) Run(ctx context.Context) error {
 			dispatched = true
 			if ch.acceptsUpdate(runCtx, u) {
 				command, isCommand := parseTelegramCommand(u.Message.Text)
-				req, bindErr := ch.bindUpdate(runCtx, u)
+				bindCtx, bindCancel := context.WithTimeout(runCtx, 2*time.Second)
+				req, bindErr := ch.bindUpdate(bindCtx, u)
+				bindCancel()
 				switch {
 				case bindErr != nil:
 					failedAttempts[u.UpdateID]++
@@ -587,7 +590,7 @@ func (ch *Channel) Run(ctx context.Context) error {
 	}
 }
 func (ch *Channel) requestFromUpdate(u update) Request {
-	r := Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
+	r := Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID, UpdateID: u.UpdateID}
 	if sender := u.Message.SenderChat; sender != nil {
 		// Anonymous administrators share a compatibility From.ID. A chat
 		// identity must never acquire permissions intended for one person.
@@ -685,12 +688,19 @@ func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 	if err := stream.Start(ctx); err != nil {
 		return err
 	}
-	resp, e := handler.Chat(ctx, r, func(text string) error {
+	emit := func(text string) error {
 		if text == "" {
 			return nil
 		}
 		return stream.Push(ctx, text)
-	})
+	}
+	var resp Response
+	var e error
+	if status, ok := handler.(ChatStatus); ok {
+		resp, e = status.ChatWithStatus(ctx, r, emit, func(statusCtx context.Context, text string) error { return stream.Status(statusCtx, text) })
+	} else {
+		resp, e = handler.Chat(ctx, r, emit)
+	}
 	if e != nil {
 		_ = stream.Abort(ctx)
 		return e

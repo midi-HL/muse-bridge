@@ -56,6 +56,7 @@ type harness struct {
 	s       *Server
 	db      *store.Store
 	backend *testBackend
+	keys    *admin.Keys
 	cookie  *http.Cookie
 	csrf    string
 	key     string
@@ -76,7 +77,7 @@ func newHarness(t *testing.T) *harness {
 	keys := admin.NewKeys(db, secure.NewRedactor())
 	backend := &testBackend{}
 	s := New(Options{Auth: a, Keys: keys, Backend: backend, LoopbackOnly: true})
-	h := &harness{s: s, db: db, backend: backend}
+	h := &harness{s: s, db: db, backend: backend, keys: keys}
 	resp := h.call("POST", "/admin/api/auth/setup", `{"password":"synthetic-password-1234","password_repeat":"synthetic-password-1234"}`, "http://127.0.0.1:8787", false, "")
 	if resp.Code != 200 {
 		t.Fatalf("setup: %s", resp.Body)
@@ -200,7 +201,7 @@ func TestOpenAIStreamingAndNonStreaming(t *testing.T) {
 	}
 	for _, want := range []string{`"object":"chat.completion.chunk"`, `"content":"hello"`, `"finish_reason":"stop"`, `data: [DONE]`} {
 		if !strings.Contains(w.Body.String(), want) {
-			t.Fatalf("missing %s", want)
+			t.Fatalf("missing %s in body %q", want, w.Body.String())
 		}
 	}
 	w = h.call("POST", "/api/chat", `{"prompt":"hi","platform":"web","user_id":"admin","session_id":"victim"}`, "", false, h.key)

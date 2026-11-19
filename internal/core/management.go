@@ -392,7 +392,7 @@ type backupRecord struct {
 	Secret json.RawMessage `json:"secret"`
 }
 
-var backupKinds = map[string]bool{"account": true, "session": true, "settings": true, "node": true, "persona": true, "sticker": true, "schedule": true, "file": true, "telegram_session": true, "telegram_retry": true, "telegram_command": true}
+var backupKinds = map[string]bool{"account": true, "session": true, "settings": true, "node": true, "persona": true, "sticker": true, "schedule": true, "file": true, "telegram_session": true, "telegram_retry": true, "telegram_command": true, "telegram_chat": true}
 
 type backupSnapshot struct {
 	backupRecord

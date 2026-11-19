@@ -355,6 +355,10 @@ func errorInfo(e error) (int, string, string) {
 	switch {
 	case errors.Is(e, ErrUnsupported):
 		return 501, "unsupported", "This operation is not supported"
+	case errors.Is(e, core.ErrDailyLimit):
+		return 429, "daily_limit", "Daily chat request limit reached"
+	case errors.Is(e, core.ErrQueueFull):
+		return 429, "queue_full", "Request queue is full; retry later"
 	case errors.Is(e, store.ErrLimit):
 		return 429, "rate_limit", "Request limit reached"
 	case errors.Is(e, context.DeadlineExceeded):
@@ -381,6 +385,17 @@ func errorInfo(e error) (int, string, string) {
 	return 400, "operation_failed", "Operation failed; check input, account availability and configuration"
 }
 func (s *Server) apiKey(w http.ResponseWriter, r *http.Request, charge bool) (admin.APIKey, bool) {
+	key, ok := s.validateAPIKey(w, r)
+	if !ok {
+		return admin.APIKey{}, false
+	}
+	if charge && !s.chargeAPIKey(w, r, key) {
+		return admin.APIKey{}, false
+	}
+	return key, true
+}
+
+func (s *Server) validateAPIKey(w http.ResponseWriter, r *http.Request) (admin.APIKey, bool) {
 	if s.keys == nil {
 		failure(w, 503, "unavailable", "API authentication is not ready")
 		return admin.APIKey{}, false
@@ -392,9 +407,9 @@ func (s *Server) apiKey(w http.ResponseWriter, r *http.Request, charge bool) (ad
 		failure(w, 401, "invalid_api_key", "Bearer API key required")
 		return admin.APIKey{}, false
 	}
-	key, e := s.keys.Authenticate(r.Context(), parts[1], charge)
-	if e != nil {
-		if errors.Is(e, store.ErrLimit) {
+	key, err := s.keys.Validate(r.Context(), parts[1])
+	if err != nil {
+		if errors.Is(err, store.ErrLimit) {
 			w.Header().Set("Retry-After", "60")
 			failure(w, 429, "rate_limit", "API key request limit reached")
 		} else {
@@ -404,6 +419,24 @@ func (s *Server) apiKey(w http.ResponseWriter, r *http.Request, charge bool) (ad
 	}
 	return key, true
 }
+
+func (s *Server) chargeAPIKey(w http.ResponseWriter, r *http.Request, key admin.APIKey) bool {
+	if s.keys == nil {
+		failure(w, 503, "unavailable", "API authentication is not ready")
+		return false
+	}
+	if err := s.keys.Charge(r.Context(), key); err != nil {
+		if errors.Is(err, store.ErrLimit) {
+			w.Header().Set("Retry-After", "60")
+			failure(w, 429, "rate_limit", "API key request limit reached")
+		} else {
+			failure(w, 401, "invalid_api_key", "Invalid API key")
+		}
+		return false
+	}
+	return true
+}
+
 func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		w.Header().Set("Allow", "GET, HEAD")

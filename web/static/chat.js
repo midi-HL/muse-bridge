@@ -68,9 +68,25 @@ export function createChat(ctx) {
     try { await chatStream(payload,event=>{
       if(generation!==sessionGeneration)return;
       if(event.session_id && event.session_id!==sessionId){sessionId=event.session_id;ctx.chatSessionId=sessionId;}
-      if(event.type==='delta'){assistant.text+=(event.text || '');assistant.pending=false;renderMessages();}else if(event.type==='status'){status.textContent=event.text || t('thinking');}else if(event.type==='attachment'&&event.attachment){assistant.attachment=event.attachment;renderMessages();}else if(event.type==='error'){throw new Error(event.text || t('chatFailed'));}else if(event.type==='done'){assistant.pending=false;if(selectedPersonaGeneration===personaSelectionGeneration)personaDirty=false;status.textContent=t('success');renderMessages();}
+      if(event.type==='error'){
+        if(event.error?.code==='cancelled')throw new DOMException(t('chatStopped'),'AbortError');
+        throw new Error(event.text || t('chatFailed'));
+      }
+      if(event.type==='delta'){assistant.text+=(event.text || '');assistant.pending=false;renderMessages();}else if(event.type==='queued'||event.type==='status'){status.textContent=event.text || t('thinking');}else if(event.type==='attachment'&&event.attachment){assistant.attachment=event.attachment;renderMessages();}else if(event.type==='done'){assistant.pending=false;if(selectedPersonaGeneration===personaSelectionGeneration)personaDirty=false;status.textContent=t('success');renderMessages();}
     },controller.signal); if(generation===sessionGeneration&&assistant.pending){assistant.pending=false;status.textContent=t('streamInterrupted');} }
-    catch(error){if(generation!==sessionGeneration)return;if(error.name==='AbortError'){assistant.pending=false;assistant.text=assistant.text || t('chatStopped');}else{assistant.pending=false;assistant.text=assistant.text || `${t('chatFailed')}: ${error.message}`;ctx.handleError(error);}renderMessages();}
+    catch(error){
+      if(generation!==sessionGeneration)return;
+      assistant.pending=false;
+      if(error.name==='AbortError'){
+        status.textContent=t('chatStopped');
+        assistant.text=assistant.text || t('chatStopped');
+      }else{
+        status.textContent=t('chatFailed');
+        assistant.text=assistant.text || `${t('chatFailed')}: ${error.message}`;
+        ctx.handleError(error);
+      }
+      renderMessages();
+    }
     finally {if(generation===sessionGeneration){controller=null;setSending(false);if(status.textContent===t('thinking'))status.textContent='';}}
   }
   async function attach(){const chosen=[...attachInput.files];if(!chosen.length)return;try{const loaded=[];for(const file of chosen){if(file.size>20*1024*1024)throw new Error(t('fileTooLarge'));loaded.push(await readFile(file));}if(attachments.reduce((n,a)=>n+a.data_base64.length,0)+loaded.reduce((n,a)=>n+a.data_base64.length,0)>54*1024*1024)throw new Error(t('attachmentsTooLarge'));attachments.push(...loaded);attachmentPreview.replaceChildren(...attachments.map((a,i)=>el('span',{class:'attachment-chip'},icon('file'),a.filename,button('',()=>{attachments.splice(i,1);attach();},'icon-button','close'))));}catch(error){ctx.notify(error.message,true);}finally{attachInput.value='';}}
