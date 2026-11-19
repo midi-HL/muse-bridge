@@ -128,7 +128,12 @@ func (h *telegramServiceHandler) command(ctx context.Context, r telegram.Request
 			return telegram.Response{}, err
 		}
 		return telegram.Response{Text: "已创建新会话。"}, nil
+	case "sessions", "switch", "rename", "history":
+		return h.sessionCommand(ctx, r, cmd, session)
 	case "retry":
+		if r.UserID == 0 {
+			return telegram.Response{Text: "无法确认匿名发送者，不能重试个人输入。请以个人身份发送。"}, nil
+		}
 		attemptID, err := h.service.TelegramRetryAttempt(ctx, session, strconv.FormatInt(r.UserID, 10))
 		if err != nil {
 			return telegram.Response{Text: "没有可重试的上一条请求。"}, nil
@@ -148,7 +153,7 @@ func (h *telegramServiceHandler) command(ctx context.Context, r telegram.Request
 		text, err := h.service.TelegramPersonas(ctx, session, strconv.FormatInt(r.UserID, 10), cmd.Args)
 		return telegram.Response{Text: text}, err
 	case "help":
-		return telegram.Response{Text: "/new 新会话\n/stop 停止生成\n/status 查看状态\n/retry 重试上一条请求\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
+		return telegram.Response{Text: "/new 新会话\n/sessions [页码] 本聊天的本地会话\n/switch 会话ID 切换本聊天会话\n/rename 名称 重命名当前会话（仅创建者）\n/history 当前会话最近 10 条消息\n/stop 停止生成\n/status 查看状态\n/retry 重试上一条请求\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
 	case "tasks", "usage":
 		return telegram.Response{}, telegram.ErrUnsupported
 	default:

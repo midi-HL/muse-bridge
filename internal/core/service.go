@@ -450,6 +450,11 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		} else if deliveryPending {
 			return nil, errors.New("Telegram command delivery is in progress")
 		}
+		if mutationPending, err := s.telegramCommandMutationPendingLocked(id); err != nil {
+			return nil, err
+		} else if mutationPending {
+			return nil, errors.New("Telegram session command is in progress")
+		}
 		if s.sessions[id] != nil {
 			return nil, errors.New("session is generating")
 		}

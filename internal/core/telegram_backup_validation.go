@@ -37,6 +37,11 @@ func validateTelegramBackupRecord(row backupRecord) error {
 		if !validTelegramSessionForChat(rec.SessionID, rec.ChatID) || row.ID != telegramSessionKey(rec.ChatID) {
 			return errors.New("invalid Telegram session identity")
 		}
+		for id := range rec.Known {
+			if !ownedTelegramSessionID(id, rec.ChatID) {
+				return errors.New("invalid Telegram session catalog identity")
+			}
+		}
 	case "telegram_retry":
 		if err := requireTelegramBackupFields(fields, "session_id", "owner", "attempt_id", "prompt"); err != nil {
 			return err

@@ -13,11 +13,24 @@ import (
 )
 
 type telegramSessionRecord struct {
-	ChatID    int64  `json:"chat_id"`
+	ChatID    int64                           `json:"chat_id"`
+	UserID    int64                           `json:"user_id"`
+	SessionID string                          `json:"session_id"`
+	CreatedAt string                          `json:"created_at"`
+	UpdatedAt string                          `json:"updated_at"`
+	Known     map[string]telegramSessionOwner `json:"known_sessions,omitempty"`
+}
+
+type telegramSessionOwner struct {
 	UserID    int64  `json:"user_id"`
-	SessionID string `json:"session_id"`
 	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+}
+
+func (r *telegramSessionRecord) rememberCurrent() {
+	if r.Known == nil {
+		r.Known = make(map[string]telegramSessionOwner)
+	}
+	r.Known[r.SessionID] = telegramSessionOwner{UserID: r.UserID, CreatedAt: r.CreatedAt}
 }
 
 func telegramSessionKey(chatID int64) string { return fmt.Sprintf("chat_%d", chatID) }
@@ -49,7 +62,9 @@ func (s *Service) TelegramSession(ctx context.Context, chatID, userID int64) (st
 		legacyID := telegramSessionID(chatID)
 		var legacy sessionRecord
 		if s.db.Get(ctx, "session", legacyID, &legacy) == nil && legacy.Platform == "telegram" {
-			if sender, parseErr := strconv.ParseInt(legacy.UserID, 10, 64); parseErr == nil && sender != 0 {
+			// Existing history never grants ownership to its first new reader.
+			rec.UserID = 0
+			if sender, parseErr := strconv.ParseInt(legacy.UserID, 10, 64); parseErr == nil && sender > 0 {
 				rec.UserID = sender
 			}
 		}
@@ -64,7 +79,7 @@ func (s *Service) TelegramSession(ctx context.Context, chatID, userID int64) (st
 	if err != nil {
 		return "", err
 	}
-	if rec.ChatID != chatID || rec.SessionID == "" {
+	if rec.ChatID != chatID || !validTelegramSessionForChat(rec.SessionID, chatID) {
 		return "", errors.New("telegram session belongs to another user")
 	}
 	if err := s.migrateLegacyTelegramSession(ctx, rec); err != nil {
@@ -110,10 +125,18 @@ func (s *Service) NewTelegramSession(ctx context.Context, chatID, userID int64) 
 	if chatID == 0 {
 		return "", errors.New("telegram chat id is required")
 	}
-	id := telegramSessionID(chatID) + "_" + strings.TrimPrefix(secure.ID(), "telegram_")
+	key := telegramSessionKey(chatID)
+	rec, err := s.loadTelegramPointer(ctx, chatID)
+	if err == nil {
+		rec.rememberCurrent()
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	id := telegramSessionID(chatID) + "_" + secure.ID()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	rec := telegramSessionRecord{ChatID: chatID, UserID: userID, SessionID: id, CreatedAt: now, UpdatedAt: now}
-	if err := s.db.Put(ctx, "telegram_session", telegramSessionKey(chatID), rec, nil); err != nil {
+	rec.ChatID, rec.UserID, rec.SessionID = chatID, userID, id
+	rec.CreatedAt, rec.UpdatedAt = now, now
+	if err := s.db.Put(ctx, "telegram_session", key, rec, nil); err != nil {
 		return "", err
 	}
 	return id, nil

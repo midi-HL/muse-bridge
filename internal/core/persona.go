@@ -86,13 +86,15 @@ func (s *Service) TelegramPersonas(ctx context.Context, sessionID, userID, selec
 	if chatID == 0 {
 		return "", errors.New("invalid Telegram session")
 	}
+	s.telegramSessionMu.Lock()
+	defer s.telegramSessionMu.Unlock()
 	var pointer telegramSessionRecord
 	if err := s.db.Get(ctx, "telegram_session", telegramSessionKey(chatID), &pointer); err != nil || pointer.SessionID != sessionID {
 		return "", errors.New("Telegram session is unavailable")
 	}
 	selection = strings.TrimSpace(selection)
 	if selection != "" {
-		if strconv.FormatInt(pointer.UserID, 10) != userID {
+		if pointer.UserID == 0 || strconv.FormatInt(pointer.UserID, 10) != userID {
 			return "人设切换失败：只有创建该会话的用户可以切换人设。", nil
 		}
 		id := selection

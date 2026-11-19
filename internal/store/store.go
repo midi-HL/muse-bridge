@@ -107,7 +107,16 @@ func (s *Store) Secret(ctx context.Context, kind, id string, dst any) error {
 	return json.Unmarshal(raw, dst)
 }
 func (s *Store) List(ctx context.Context, kind string) ([]Record, error) {
-	rows, e := s.db.QueryContext(ctx, "SELECT id,kind,data,updated_at FROM records WHERE kind=? ORDER BY updated_at DESC,id", kind)
+	return s.listRecords(ctx, "SELECT id,kind,data,updated_at FROM records WHERE kind=? ORDER BY updated_at DESC,id", kind)
+}
+
+// ListPrefix treats the prefix literally, including SQL wildcard characters.
+func (s *Store) ListPrefix(ctx context.Context, kind, prefix string) ([]Record, error) {
+	return s.listRecords(ctx, "SELECT id,kind,data,updated_at FROM records WHERE kind=? AND substr(id, 1, length(?))=? ORDER BY updated_at DESC,id", kind, prefix, prefix)
+}
+
+func (s *Store) listRecords(ctx context.Context, query string, args ...any) ([]Record, error) {
+	rows, e := s.db.QueryContext(ctx, query, args...)
 	if e != nil {
 		return nil, e
 	}

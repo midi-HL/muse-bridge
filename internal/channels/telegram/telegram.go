@@ -327,6 +327,10 @@ type update struct {
 			ID   int64  `json:"id"`
 			Type string `json:"type"`
 		} `json:"chat"`
+		SenderChat *struct {
+			ID    int64  `json:"id"`
+			Title string `json:"title"`
+		} `json:"sender_chat"`
 		Text     string          `json:"text"`
 		Entities []messageEntity `json:"entities"`
 		Reply    *struct {
@@ -583,7 +587,17 @@ func (ch *Channel) Run(ctx context.Context) error {
 	}
 }
 func (ch *Channel) requestFromUpdate(u update) Request {
-	return Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
+	r := Request{ChatID: u.Message.Chat.ID, UserID: u.Message.From.ID, ChatType: u.Message.Chat.Type, Username: u.Message.From.Username, Name: strings.TrimSpace(u.Message.From.FirstName + " " + u.Message.From.LastName), Text: u.Message.Text, MessageID: u.Message.MessageID}
+	if sender := u.Message.SenderChat; sender != nil {
+		// Anonymous administrators share a compatibility From.ID. A chat
+		// identity must never acquire permissions intended for one person.
+		r.UserID, r.Username = 0, ""
+		r.Name = strings.TrimSpace(sender.Title)
+		if r.Name == "" {
+			r.Name = "匿名发言人"
+		}
+	}
+	return r
 }
 
 // acceptsUpdate filters incoming messages before they can create session state.
@@ -592,7 +606,7 @@ func (ch *Channel) acceptsUpdate(ctx context.Context, u update) bool {
 		return false
 	}
 	ch.mu.Lock()
-	allowed := len(ch.whitelist) == 0 || ch.whitelist[u.Message.From.ID]
+	allowed := len(ch.whitelist) == 0 || (u.Message.SenderChat == nil && u.Message.From.ID != 0 && ch.whitelist[u.Message.From.ID])
 	botUsername, client := ch.botUsername, ch.client
 	ch.mu.Unlock()
 	if !allowed {
@@ -634,7 +648,7 @@ func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 	client := ch.client
 	handler := ch.handler
 	botUsername := ch.botUsername
-	allowed := len(ch.whitelist) == 0 || ch.whitelist[r.UserID]
+	allowed := len(ch.whitelist) == 0 || (r.UserID != 0 && ch.whitelist[r.UserID])
 	ch.mu.Unlock()
 	if !allowed || client == nil || handler == nil {
 		return nil

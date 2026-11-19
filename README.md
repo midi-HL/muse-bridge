@@ -16,7 +16,7 @@ $env:MUSE_SETUP_TOKEN = "use-a-long-random-one-time-setup-token"
 
 ## `telegram.bot_username` 可选，用于校验群聊中的 `/stop@bot`、`/new@bot` 等目标命令；未配置时带 `@目标` 的命令会被忽略，避免误执行给其他机器人发送的命令。长轮询会有界分派生成请求，使生成期间 `/stop` 仍可处理。
 
-Telegram `/new` 的当前 chat 会话会持久化并在重启后恢复；私聊直接处理文本，群聊普通文本需明确 @ 当前 Bot 或回复当前 Bot，群聊命令仍可用。`/retry` 按发送者的 attempt ID 重试最近一次输入，生成失败仍可重试，相同文本不会覆盖之前成功回合。Webhook 重投同一 command 更新会复用缓存结果。
+Telegram `/new` 的当前 chat 会话会持久化并在重启后恢复；私聊直接处理文本，群聊普通文本需明确 @ 当前 Bot 或回复当前 Bot，群聊命令仍可用。`/retry` 按发送者的 attempt ID 重试最近一次输入，生成失败仍可重试，相同文本不会覆盖之前成功回合。Webhook 重投同一 command 更新会复用缓存结果。`/sessions [页码]` 列出当前聊天的本地会话，`/switch ID` 切换，`/rename 名称` 由会话创建者改名，`/history` 查看最近消息；群聊切换影响整个聊天。
 
 ## 环境变量与配置
 

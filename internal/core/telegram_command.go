@@ -204,6 +204,23 @@ func invokeTelegramCommand(fn func() (string, error)) (text string, err error) {
 	return fn()
 }
 
+func (s *Service) telegramCommandMutationPendingLocked(sessionID string) (bool, error) {
+	rows, err := s.db.List(context.Background(), "telegram_command")
+	if err != nil {
+		return false, err
+	}
+	for _, row := range rows {
+		var record telegramCommandRecord
+		if err := json.Unmarshal(row.Data, &record); err != nil {
+			return false, errors.New("invalid Telegram command state")
+		}
+		if record.SessionID == sessionID && record.Command == "rename" && s.telegramCommands[row.ID] != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (s *Service) telegramCommandDeliveryPendingLocked(sessionID string) (bool, error) {
 	rows, err := s.db.List(context.Background(), "telegram_command")
 	if err != nil {
