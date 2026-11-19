@@ -33,22 +33,25 @@ func (h *telegramServiceHandler) newSession(ctx context.Context, r telegram.Requ
 }
 
 type telegramRuntime struct {
-	mu          sync.Mutex
-	parent      context.Context
-	cancel      context.CancelFunc
-	ch          *telegram.Channel
-	service     *core.Service
-	handler     telegram.Handler
-	token       string
-	secret      string
-	mode        string
-	webhookURL  string
-	whitelist   string
-	botUsername string
+	mu               sync.Mutex
+	parent           context.Context
+	cancel           context.CancelFunc
+	ch               *telegram.Channel
+	service          *core.Service
+	handler          telegram.Handler
+	token            string
+	secret           string
+	mode             string
+	webhookURL       string
+	whitelist        string
+	botUsername      string
+	disabled         bool
+	whitelistEnabled bool
 }
 
 type telegramConfig struct {
 	token, mode, secret, webhookURL, whitelist, botUsername string
+	disabled, whitelistEnabled                              bool
 }
 
 func readTelegramConfig(values map[string]any) telegramConfig {
@@ -59,10 +62,14 @@ func readTelegramConfig(values map[string]any) telegramConfig {
 	cfg.webhookURL, _ = values["telegram.webhook_url"].(string)
 	cfg.whitelist, _ = values["telegram.whitelist"].(string)
 	cfg.botUsername, _ = values["telegram.bot_username"].(string)
+	if enabled, configured := values["telegram.enabled"].(bool); configured {
+		cfg.disabled = !enabled
+	}
+	cfg.whitelistEnabled, _ = values["telegram.whitelist_enabled"].(bool)
 	return cfg
 }
 func (r *telegramRuntime) sameConfig(cfg telegramConfig) bool {
-	return r.token == cfg.token && r.mode == cfg.mode && r.secret == cfg.secret && r.webhookURL == cfg.webhookURL && r.whitelist == cfg.whitelist && r.botUsername == cfg.botUsername
+	return r.token == cfg.token && r.mode == cfg.mode && r.secret == cfg.secret && r.webhookURL == cfg.webhookURL && r.whitelist == cfg.whitelist && r.botUsername == cfg.botUsername && r.disabled == cfg.disabled && r.whitelistEnabled == cfg.whitelistEnabled
 }
 
 func (h *telegramServiceHandler) Chat(ctx context.Context, r telegram.Request, emit func(string) error) (telegram.Response, error) {
@@ -239,6 +246,9 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	if r.ch != nil && r.sameConfig(cfg) {
 		return nil
 	}
+	if cfg.disabled {
+		return r.stopLocked()
+	}
 	if mode == "webhook" && strings.TrimSpace(webhookURL) == "" && strings.TrimSpace(token) != "" {
 		return errors.New("telegram: webhook mode requires telegram.webhook_url")
 	}
@@ -259,6 +269,7 @@ func (r *telegramRuntime) apply(values map[string]any) error {
 	r.webhookURL = webhookURL
 	r.whitelist = cfg.whitelist
 	r.botUsername = cfg.botUsername
+	r.disabled, r.whitelistEnabled = cfg.disabled, cfg.whitelistEnabled
 	if mode == "webhook" {
 		if err := r.registerWebhookLocked(); err != nil {
 			_ = r.stopLocked()

@@ -22,7 +22,8 @@ import (
 
 const maxBackupBytes = 64 << 20
 
-var managedID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$`)
+// secure.ID uses raw URL Base64, so '-' and '_' are valid first characters.
+var managedID = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.:-]{0,127}$`)
 
 type nodeRecord struct {
 	ID        string `json:"id"`
@@ -460,6 +461,7 @@ func (s *Service) importBackup(ctx context.Context, args map[string]any) (any, e
 	}
 
 	seen := make(map[string]bool, len(env.Records))
+	requiresRestart := false
 	for index, row := range env.Records {
 		// Store.Export already excludes auth/admin_session/api_key. Keep the
 		// allowlist here too so a hand-crafted backup cannot reintroduce them.
@@ -469,6 +471,11 @@ func (s *Service) importBackup(ctx context.Context, args map[string]any) (any, e
 		}
 		if !backupKinds[row.Kind] || !validID || len(row.Data) == 0 || !json.Valid(row.Data) {
 			return nil, errors.New("backup contains an invalid or forbidden record")
+		}
+		if row.Kind == "account" || row.Kind == "settings" {
+			// These records also have in-memory owners. Do not replace active
+			// clients or channel configuration during a database-only restore.
+			requiresRestart = true
 		}
 		if err := validateTelegramBackupRecord(row); err != nil {
 			return nil, errors.New("backup contains an invalid or forbidden Telegram record")
@@ -566,7 +573,7 @@ func (s *Service) importBackup(ctx context.Context, args map[string]any) (any, e
 			return rollback(err)
 		}
 	}
-	return map[string]any{"count": len(env.Records)}, nil
+	return map[string]any{"count": len(env.Records), "requires_restart": requiresRestart}, nil
 }
 
 func (s *Service) testASR(ctx context.Context, args map[string]any) (any, error) {
@@ -585,7 +592,10 @@ func (s *Service) testASR(ctx context.Context, args map[string]any) (any, error)
 	if name == "" {
 		name = "audio.bin"
 	}
-	tr, err := s.media.Transcribe(ctx, media.Attachment{Kind: "audio", Name: filepath.Base(name), Data: data})
+	s.settingsMu.RLock()
+	processor := s.media
+	s.settingsMu.RUnlock()
+	tr, err := processor.Transcribe(ctx, media.Attachment{Kind: "audio", Name: filepath.Base(name), Data: data})
 	if err != nil {
 		return nil, err
 	}

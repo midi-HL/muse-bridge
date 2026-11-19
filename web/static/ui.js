@@ -4,7 +4,7 @@ let idCounter=0;
 export function empty(title, description, actionButton, iconName='overview') { return el('div',{class:'empty'},el('span',{class:'empty-icon'},icon(iconName)),el('h3',{},title),el('p',{},description),actionButton); }
 export function card(title, body, subtitle, actions) { return el('section',{class:'card'},title ? el('div',{class:'card-head'},el('div',{},el('h2',{},title),subtitle?el('p',{},subtitle):null),actions) : null,el('div',{class:'card-body'},body)); }
 export function note(text, kind='info') { return el('div',{class:`notice ${kind}`,role:kind==='danger'?'alert':'note'},icon(kind==='danger'?'alert':'shield'),el('span',{},text)); }
-export function resultView(result) { if (!result) return null; return el('div',{class:`result ${result.error?'result-error':''}`,'aria-live':'polite'},el('div',{class:'result-heading'},icon(result.pending?'refresh':result.error?'alert':'check'),el('strong',{},result.pending?t('running'):result.error?t('failed'):t('success'))),result.data !== undefined ? el('pre',{},pretty(result.data)) : null); }
+export function resultView(result) { if (!result) return null; return el('div',{class:`result ${result.error?'result-error':''}`,'aria-live':'polite'},el('div',{class:'result-heading'},icon(result.pending?'refresh':result.error?'alert':'check'),el('strong',{},result.pending?t('running'):result.error?t('failed'):t('success'))),result.data !== undefined ? result.error?el('p',{class:'result-message'},pretty(result.data)):el('details',{class:'result-detail'},el('summary',{},t('detail')),el('pre',{},pretty(result.data))) : null); }
 export function fieldControl(field,value) {
   const key=field.key || field.name, id=`field-${++idCounter}`;
   const label=schemaText(field), description=schemaText({...field,key:'',name:''},'description');
@@ -23,7 +23,6 @@ export function fieldControl(field,value) {
   if (secret) {
     controls.push(el('div',{class:'secret-state'},badge(current?.configured?'enabled':'disabled'),el('span',{},current?.configured?'••••••••':t('notConfigured'))));
     if (current?.configured) { clear=el('input',{type:'checkbox'}); controls.push(el('label',{class:'check-row'},clear,t('secretClear'))); }
-    controls.push(el('small',{class:'muted'},t('secretHint')));
   }
   const root=el('div',{class:`field ${input.type==='checkbox'?'boolean-field':''}`},el('label',{htmlFor:id},label,field.required?el('span',{class:'required'},' *'):null),...controls,description?el('small',{id:`${id}-hint`,class:'muted'},description):null,error);
   return {root,input,key,field,read(){ error.textContent=''; input.removeAttribute('aria-invalid'); if (secret && !input.value && !clear?.checked) return undefined; try { return coerceField(field,input.type==='checkbox'?input.checked:input.value); } catch(e) { error.textContent=e.message; input.setAttribute('aria-invalid','true'); throw e; } },setError(message){error.textContent=String(message);input.setAttribute('aria-invalid','true');},willClear(){return !!clear?.checked;}};
@@ -43,7 +42,7 @@ export function form(fields, values, onSubmit, submitLabel=t('save'), options={}
     try { await onSubmit(args,root); progress.textContent=t('success'); }
     catch(e){error.textContent=e.message || t('failed');for(const [key,message] of Object.entries(e.fields || {}))controls.find(c=>c.key===key)?.setError(message);progress.textContent='';}
     finally {pending=false;submit.disabled=false;}
-  }},el('div',{class:options.columns?'form-grid':''},controls.map(c=>c.root)),error,el('div',{class:'form-actions'},submit,progress));
+  }},el('div',{class:options.columns?'form-fields form-grid':'form-fields'},controls.map(c=>c.root)),error,el('div',{class:'form-actions'},submit,progress));
   root.controls=controls;
   return root;
 }

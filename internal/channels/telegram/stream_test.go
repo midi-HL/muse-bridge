@@ -134,3 +134,81 @@ func TestSplitTelegramChunkCountsUTF16(t *testing.T) {
 		t.Fatal("chunk lost content")
 	}
 }
+
+func TestStreamEditorPreservesTailAfterOverflow(t *testing.T) {
+	for _, next := range []string{"", "more"} {
+		s, rt := newStreamTest(t)
+		ctx := context.Background()
+		if err := s.Push(ctx, strings.Repeat("x", telegramTextLimit)+"tail"); err != nil {
+			t.Fatal(err)
+		}
+		if next != "" {
+			if err := s.Push(ctx, next); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := s.Close(ctx, ""); err != nil {
+			t.Fatal(err)
+		}
+		last := rt.calls[len(rt.calls)-1]
+		if strings.HasSuffix(last.method, "deleteMessage") || last.values.Get("text") != "tail"+next {
+			t.Fatalf("last message = %#v; want remaining tail %q", last, "tail"+next)
+		}
+	}
+}
+
+func TestStreamEditorPreservesPlainTextSymbols(t *testing.T) {
+	for _, text := range []string{"x < y & z > q", strings.Repeat("<&>", 2000)} {
+		s, rt := newStreamTest(t)
+		ctx := context.Background()
+		if err := s.Start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Push(ctx, text); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Close(ctx, text); err != nil {
+			t.Fatal(err)
+		}
+		var delivered strings.Builder
+		for _, call := range rt.calls {
+			if call.values.Get("text") == streamPlaceholder {
+				continue
+			}
+			if call.values.Get("parse_mode") != "" {
+				t.Fatalf("plain text reply unexpectedly used parse_mode %q", call.values.Get("parse_mode"))
+			}
+			delivered.WriteString(call.values.Get("text"))
+		}
+		if delivered.String() != text {
+			t.Fatalf("stream altered symbols: delivered %d bytes, want original %d bytes", delivered.Len(), len(text))
+		}
+	}
+}
+
+func TestCommandAndScheduledTextPreserveSymbolsWhileSplitting(t *testing.T) {
+	text := strings.Repeat("<&>", 2000)
+	for _, command := range []bool{false, true} {
+		s, rt := newStreamTest(t)
+		ch := &Channel{client: s.client, handler: Callbacks{OnCommand: func(context.Context, Request, Command) (Response, error) { return Response{Text: text}, nil }}}
+		var err error
+		if command {
+			err = ch.handleRequest(context.Background(), Request{ChatID: 42, UserID: 7, Text: "/status"})
+		} else {
+			err = ch.SendText(context.Background(), 42, text)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		var delivered strings.Builder
+		for _, call := range rt.calls {
+			if call.values.Get("parse_mode") != "" {
+				t.Fatal("plain response unexpectedly used HTML mode")
+			}
+			delivered.WriteString(call.values.Get("text"))
+		}
+		if delivered.String() != text {
+			t.Fatal("long reply changed or lost original symbols")
+		}
+	}
+}

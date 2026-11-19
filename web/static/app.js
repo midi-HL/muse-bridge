@@ -20,22 +20,23 @@ function navItems(){return navGroups.flatMap(group=>group.items);}
 function titleFor(page){return t(page);}
 function renderNavigation(){nav.replaceChildren(...navGroups.map(group=>el('div',{class:'nav-group'},el('div',{class:'nav-group-label'},t(group.label)),...group.items.map(([page,iconName])=>el('button',{type:'button',class:`nav-item ${ctx.page===page?'active':''}`,onClick:()=>navigate(page)},icon(iconName),el('span',{},t(page)),ctx.page===page?el('span',{class:'nav-current','aria-hidden':'true'}):null)))));}
 function navigate(page){if(!navItems().some(([key])=>key===page))page='overview';if(ctx.page===page){mobileMenu?.classList.remove('open');return;}if(chat && ctx.page==='chat' && chat.isSending?.()){notify(t('cancelGeneration'),true);return;}ctx.page=page;pages.resetFilters();renderShell();mobileMenu?.classList.remove('open');}
-function renderShell(){title.textContent=titleFor(ctx.page);subtitle.textContent=t(`${ctx.page}Desc`);renderNavigation();renderContent();}
-function renderContent(){if(!content)return;content.replaceChildren(ctx.page==='chat'?chat.render():pages.render(ctx.page));}
+function renderShell(){title.textContent=titleFor(ctx.page);renderNavigation();renderContent();content.scrollTop=0;}
+function renderContent(){if(!content)return;if(ctx.page==='chat'&&chat?.isSending?.()&&content.firstElementChild)return;content.dataset.page=ctx.page;content.replaceChildren(ctx.page==='chat'?chat.render():pages.render(ctx.page));}
 function refreshPagePeriodically(){ if(ctx.page==='logs'||ctx.page==='overview'||ctx.page==='sessions') refresh().catch(()=>{}); chat?.refreshHistory?.(); }
 function openChat(session){chat?.chooseSession(session);}
 function makeShell(){
   root.replaceChildren();
   shell=el('div',{class:'app-shell'});
-  const sidebar=el('aside',{class:'sidebar',id:'sidebar'},el('div',{class:'sidebar-brand'},el('span',{class:'brand-mark'},'m'),el('div',{},el('strong',{},t('brand')),el('small',{},'Muse Bridge'))),el('div',{class:'sidebar-status'},icon('shield'),el('span',{},t('protected'))),nav=el('nav',{class:'navigation','aria-label':t('workspace')}),el('div',{class:'sidebar-foot'},el('span',{},t('localFirst')),button(t('logout'),logout,'quiet','logout')));
+  const sidebar=el('aside',{class:'sidebar',id:'sidebar'},el('div',{class:'sidebar-brand'},el('img',{class:'brand-mark',src:'/admin/mark.svg',alt:''}),el('strong',{},t('brand'))),nav=el('nav',{class:'navigation','aria-label':t('workspace')}),el('div',{class:'sidebar-foot'},button(t('logout'),logout,'quiet','logout')));
   mobileMenu=el('div',{class:'mobile-overlay',onClick:()=>mobileMenu.classList.remove('open')});
-  const main=el('main',{class:'main',id:'main'},el('header',{class:'topbar'},el('div',{class:'topbar-left'},button(t('menu'),()=>mobileMenu.classList.toggle('open'),'icon-button','menu'),el('div',{},title=el('h1',{}),subtitle=el('p',{}))),el('div',{class:'topbar-actions'},button(language==='zh'?'EN':'中文',()=>{setLanguage(language==='zh'?'en':'zh');makeShell();},'quiet'),button(t('theme'),()=>{const dark=document.documentElement.dataset.theme==='dark';setTheme(dark?'light':'dark');},'icon-button',prefersDark()?'sun':'moon'),button(t('refresh'),()=>refresh().catch(()=>{}),'icon-button','refresh'))),content=el('section',{class:'content'}));
+  const themeButton=button(t('theme'),()=>{const dark=document.documentElement.dataset.theme==='dark';setTheme(dark?'light':'dark');themeButton.replaceChildren(icon(dark?'moon':'sun'));},'icon-button',document.documentElement.dataset.theme==='dark'?'sun':'moon');
+  const main=el('main',{class:'main',id:'main'},el('header',{class:'topbar'},el('div',{class:'topbar-left'},button(t('menu'),()=>mobileMenu.classList.toggle('open'),'icon-button','menu'),title=el('h1',{})),el('div',{class:'topbar-actions'},button(language==='zh'?'EN':'中文',()=>{if(chat?.isSending?.()){notify(t('cancelGeneration'),true);return;}setLanguage(language==='zh'?'en':'zh');makeShell();},'quiet'),themeButton,button(t('refresh'),()=>refresh().catch(()=>{}),'icon-button','refresh'))),content=el('section',{class:'content'}));
   toastHost=el('div',{class:'toast-host','aria-live':'polite'});
   shell.append(mobileMenu,sidebar,main,toastHost);root.append(shell);renderShell();
 }
 async function logout(){try{await request('/auth/logout',{body:{}});}catch{}showAuth();}
 function authForm(mode){
-  const setup=mode==='setup', box=el('div',{class:'auth-card'},el('div',{class:'auth-logo'},el('span',{class:'brand-mark'},'m')),el('p',{class:'eyebrow'},t('brand')),el('h1',{},setup?t('setupTitle'):t('authTitle')),el('p',{class:'auth-subtitle'},setup?t('setupSubtitle'):t('authSubtitle')));
+  const setup=mode==='setup', box=el('div',{class:'auth-card'},el('div',{class:'auth-logo'},el('img',{class:'brand-mark',src:'/admin/mark.svg',alt:''})),el('h1',{},setup?t('setupTitle'):t('authTitle')),el('p',{class:'auth-subtitle'},setup?t('setupSubtitle'):t('authSubtitle')));
   const password=el('input',{type:'password',autocomplete:setup?'new-password':'current-password',required:true,minLength:setup?12:1});
   const setupToken=setup&&appState.auth?.setup_token_required?el('input',{type:'password',autocomplete:'off',required:true}):null;
   const repeat=setup?el('input',{type:'password',autocomplete:'new-password',required:true,minLength:12}):null;

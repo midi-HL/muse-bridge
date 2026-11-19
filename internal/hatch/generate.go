@@ -333,6 +333,9 @@ func (r *subscriptionReader) next(ctx context.Context) (map[string]any, error) {
 			dec := json.NewDecoder(bytes.NewReader(r.pending))
 			var ev map[string]any
 			if dec.Decode(&ev) == nil && ev != nil && dec.InputOffset() > 0 {
+				if dec.InputOffset() > maxEventLine {
+					return nil, fault("protocol", "subscribe", "event line exceeds limit")
+				}
 				r.pending = r.pending[dec.InputOffset():]
 				return ev, nil
 			}
@@ -362,6 +365,9 @@ func (r *subscriptionReader) next(ctx context.Context) (map[string]any, error) {
 			dec := json.NewDecoder(bytes.NewReader(r.pending))
 			var ev map[string]any
 			if dec.Decode(&ev) == nil && ev != nil && dec.InputOffset() > 0 {
+				if dec.InputOffset() > maxEventLine {
+					return nil, fault("protocol", "subscribe", "event line exceeds limit")
+				}
 				r.pending = r.pending[dec.InputOffset():]
 				return ev, nil
 			}

@@ -340,13 +340,14 @@ type update struct {
 	} `json:"message"`
 }
 type Channel struct {
-	client      *Client
-	handler     Handler
-	whitelist   map[int64]bool
-	mode        string
-	botUsername string
-	poll        time.Duration
-	mu          sync.Mutex
+	client            *Client
+	handler           Handler
+	whitelist         map[int64]bool
+	whitelistRequired bool
+	mode              string
+	botUsername       string
+	poll              time.Duration
+	mu                sync.Mutex
 }
 
 func New(cfg map[string]any, h Handler) (*Channel, error) {
@@ -362,14 +363,24 @@ func New(cfg map[string]any, h Handler) (*Channel, error) {
 	if m, ok := cfg["telegram.mode"].(string); ok {
 		ch.mode = m
 	}
+	ch.whitelist, ch.whitelistRequired = configuredWhitelist(cfg)
+	return ch, nil
+}
+
+func configuredWhitelist(cfg map[string]any) (map[int64]bool, bool) {
+	list := map[int64]bool{}
+	required, configured := cfg["telegram.whitelist_enabled"].(bool)
+	if configured && !required {
+		return list, false
+	}
 	if raw, ok := cfg["telegram.whitelist"].(string); ok {
 		for _, v := range strings.Split(raw, ",") {
-			if id, e := strconv.ParseInt(strings.TrimSpace(v), 10, 64); e == nil {
-				ch.whitelist[id] = true
+			if id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil && id > 0 {
+				list[id] = true
 			}
 		}
 	}
-	return ch, nil
+	return list, required
 }
 
 // parseTelegramCommand also accepts group commands addressed to this bot.
@@ -609,7 +620,7 @@ func (ch *Channel) acceptsUpdate(ctx context.Context, u update) bool {
 		return false
 	}
 	ch.mu.Lock()
-	allowed := len(ch.whitelist) == 0 || (u.Message.SenderChat == nil && u.Message.From.ID != 0 && ch.whitelist[u.Message.From.ID])
+	allowed := (!ch.whitelistRequired && len(ch.whitelist) == 0) || (u.Message.SenderChat == nil && u.Message.From.ID != 0 && ch.whitelist[u.Message.From.ID])
 	botUsername, client := ch.botUsername, ch.client
 	ch.mu.Unlock()
 	if !allowed {
@@ -651,7 +662,7 @@ func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 	client := ch.client
 	handler := ch.handler
 	botUsername := ch.botUsername
-	allowed := len(ch.whitelist) == 0 || (r.UserID != 0 && ch.whitelist[r.UserID])
+	allowed := (!ch.whitelistRequired && len(ch.whitelist) == 0) || (r.UserID != 0 && ch.whitelist[r.UserID])
 	ch.mu.Unlock()
 	if !allowed || client == nil || handler == nil {
 		return nil
@@ -666,7 +677,7 @@ func (ch *Channel) handleRequest(ctx context.Context, r Request) error {
 		}
 		if resp.Text != "" {
 			send := func() error {
-				_, sendErr := client.Send(ctx, r.ChatID, MarkdownHTML(resp.Text), true)
+				_, sendErr := client.Send(ctx, r.ChatID, resp.Text, false)
 				if sendErr != nil {
 					return &commandReplyError{err: sendErr}
 				}
@@ -757,14 +768,7 @@ func (ch *Channel) Reload(ctx context.Context, cfg map[string]any) error {
 	if username, ok := cfg["telegram.bot_username"].(string); ok {
 		ch.botUsername = strings.TrimPrefix(strings.TrimSpace(username), "@")
 	}
-	ch.whitelist = map[int64]bool{}
-	if raw, ok := cfg["telegram.whitelist"].(string); ok {
-		for _, v := range strings.Split(raw, ",") {
-			if id, e := strconv.ParseInt(strings.TrimSpace(v), 10, 64); e == nil {
-				ch.whitelist[id] = true
-			}
-		}
-	}
+	ch.whitelist, ch.whitelistRequired = configuredWhitelist(cfg)
 	_ = ctx
 	return nil
 }
@@ -777,7 +781,7 @@ func (ch *Channel) SendText(ctx context.Context, chatID int64, text string) erro
 	if client == nil {
 		return ErrNotConfigured
 	}
-	_, err := client.Send(ctx, chatID, MarkdownHTML(text), true)
+	_, err := client.Send(ctx, chatID, text, false)
 	return err
 }
 

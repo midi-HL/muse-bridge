@@ -20,6 +20,7 @@ export function createPages(ctx) {
       if(opts.download)download(data?.content ?? data?.blob ?? data,data?.filename || opts.filename,data?.mime);
       results.set(key,{data:opts.download?{filename:data?.filename || opts.filename}:redact(data ?? {ok:true})});
       await ctx.refresh(false);
+      if(data?.requires_restart)ctx.notify(language==='zh'?'备份已导入，重启服务后生效。':'Backup imported. Restart the service to apply it.');
       if(ctx.page===page)ctx.renderContent();
       return data;
     } catch(error){results.set(key,{error:true,data:error.message});if(ctx.page===page)ctx.renderContent();ctx.handleError(error);throw error;}
@@ -32,7 +33,7 @@ export function createPages(ctx) {
     const draw=()=>{const q=search.toLowerCase();const rows=items.filter(row=>(!q || JSON.stringify(redact(row)).toLowerCase().includes(q)) && (filter==='all' || row.status===filter || (filter==='enabled'&&row.enabled)||(filter==='disabled'&&!row.enabled)));
       body.replaceChildren(rows.length?table(columns,rows):empty(items.length?t('noMatches'):t('noData'),items.length?t('searchPlaceholder'):emptyText,items.length?button(t('clearFilter'),()=>{search='';filter='all';ctx.renderContent();}):primary));};
     draw();
-    return el('div',{},toolbar(searchBox(value=>{search=value;draw();}),extra,primary),body,...pageResults());
+    return el('div',{class:'page-stack'},toolbar(searchBox(value=>{search=value;draw();}),extra,primary),body,...pageResults());
   }
   function settingsGroups(wanted) {
     const fields=(ctx.schema.settings || []).filter(field=>!wanted || wanted.includes(field.group));
@@ -78,14 +79,14 @@ export function createPages(ctx) {
       return el('div',{},el('div',{class:'stats-grid'},stat(t('healthyAccounts'),`${healthy} / ${accounts.length}`,t('accountHealth'),'accounts'),stat(t('messagesToday'),stats.messages_today ?? stats.today_messages,t('messagesToday'),'chat'),stat(t('errorRate'),stats.error_rate==null?'—':`${(stats.error_rate*100).toFixed(1)}%`,t('recent'),'logs'),stat(t('activeSessions'),stats.active_sessions ?? (s.sessions || []).length,t('sessions'),'sessions')),
         el('div',{class:'two-col overview-grid'},card(t('accountHealth'),health,null,button(t('accounts'),()=>ctx.navigate('accounts'),'quiet','arrow')),card(t('overviewStatus'),el('div',{class:'status-list'},el('div',{},el('span',{},t('protocol')),badge(protocol)),el('div',{},el('span',{},t('queue')),el('strong',{},stats.queue_size ?? stats.queued ?? '—')),el('div',{},el('span',{},t('lastProbe')),el('span',{},date(stats.protocol_checked_at || stats.protocol?.checked_at))),button(t('protocolProbe'),run('protocol.probe'),'secondary','refresh')),null)),
         card(t('quickActions'),el('div',{class:'quick-grid'},[['chat','chat'],['accountImport','accounts'],['platforms','platforms'],['commands','commands']].map(([label,page])=>button(t(label),()=>page==='accounts'?accountImport():ctx.navigate(page),'quick-action',page)))),
-        card(t('capabilities'),(s.capabilities || []).length?el('div',{class:'capability-grid'},s.capabilities.map(c=>el('div',{class:'capability'},el('div',{class:'split'},el('strong',{},schemaText(c,'feature') || c.name),badge(c.status)),el('p',{class:'muted'},schemaText(c,'detail'))))):note(t('capabilityNote')),t('capabilityNote')),...pageResults());
+        (s.capabilities || []).length?card(t('capabilities'),el('div',{class:'capability-grid'},s.capabilities.map(c=>el('div',{class:'capability'},el('div',{class:'split'},el('strong',{},schemaText(c,'feature') || c.name),badge(c.status)),el('p',{class:'muted'},schemaText(c,'detail'))))),t('capabilityNote')):null,...pageResults());
     },
     accounts(){const s=ctx.state;const select=el('select',{'aria-label':t('status'),onChange:e=>{filter=e.target.value;ctx.renderContent();}},['all','ok','unknown','pending_vm','invalid','disabled'].map(v=>el('option',{value:v,text:t(v)})));select.value=filter;
       return el('div',{},listPage(s.accounts || [],[
         {label:t('account'),render:a=>el('div',{},el('strong',{},nameOf(a)),el('small',{class:'muted block'},a.note || a.id))},
         {label:t('status'),render:a=>badge(a.status || (a.enabled?'unknown':'disabled'))},
         {label:t('credentials'),render:a=>el('div',{},el('code',{},'••••••••'),el('small',{class:'muted block'},a.configured===false?t('notConfigured'):t('configured')))},
-        {label:t('node'),render:a=>text(s.nodes?.find(n=>n.id===a.node_id)?.name || (a.node_id || t('autoNode')))},
+        {label:t('node'),render:a=>text(s.nodes?.find(n=>n.id===a.node_id)?.name || (a.node_id || (language==='zh'?'默认连接':'Default connection')))},
         {label:t('quota'),render:a=>text(a.quota ?? a.quota_cache)},
         {label:t('lastProbe'),render:a=>el('div',{},date(a.last_probe_at || a.last_probe),a.cooldown_until?el('small',{class:'muted block'},t('cooldown')+': '+date(a.cooldown_until)):null)},
         {label:t('actions'),render:a=>rowActions(button(t('probe'),run('accounts.probe',{id:a.id}),'quiet'),button(t('edit'),()=>accountForm(a),'quiet'),button(a.enabled===false?t('enable'):t('disable'),run('accounts.update',{id:a.id,enabled:a.enabled===false}),'quiet'),button(t('delete'),()=>danger('accounts.delete',{id:a.id},nameOf(a)),'quiet danger-text'))}
@@ -134,7 +135,7 @@ export function createPages(ctx) {
       {label:t('actions'),render:s=>rowActions(button(t('edit'),()=>scheduleForm(s),'quiet'),button(t('delete'),()=>danger('schedules.delete',{id:s.id},s.name),'quiet danger-text'))}
     ],t('emptySchedules'),button(t('scheduleAdd'),()=>scheduleForm(),'primary','plus'));},
     commands(){const operations=ctx.schema.operations || [];const grid=el('div',{class:'command-grid'});
-      const draw=()=>{const q=search.toLowerCase();grid.replaceChildren(...operations.filter(o=>[o.name,schemaText(o,'title'),o.group].join(' ').toLowerCase().includes(q)).map(o=>el('article',{class:'command-card'},el('div',{class:'split'},icon(o.group || 'commands'),o.dangerous?badge('warning'):null),el('h3',{},schemaText(o,'title') || o.name),el('code',{class:'muted'},o.name),el('p',{class:'muted'},schemaText({...o,key:'',name:''},'description')),button(t('run'),()=>openOperation(o),'secondary','arrow'))));if(!grid.childElementCount)grid.append(empty(t('noData'),operations.length?t('noMatches'):t('noOperations'),button(t('refresh'),()=>ctx.refresh()),'commands'));};draw();return el('div',{},note(t('commandHint')),toolbar(searchBox(v=>{search=v;draw();},t('operationSearch'))),grid,...pageResults());}
+      const draw=()=>{const q=search.toLowerCase();grid.replaceChildren(...operations.filter(o=>[o.name,schemaText(o,'title'),o.group].join(' ').toLowerCase().includes(q)).map(o=>el('article',{class:'command-card'},el('div',{class:'split'},icon(o.group || 'commands'),o.dangerous?badge('warning'):null),el('h3',{},schemaText(o,'title') || o.name),el('code',{class:'muted'},o.name),el('p',{class:'muted'},schemaText({...o,key:'',name:''},'description')),button(t('run'),()=>openOperation(o),'secondary','arrow'))));if(!grid.childElementCount)grid.append(empty(t('noData'),operations.length?t('noMatches'):t('noOperations'),button(t('refresh'),()=>ctx.refresh()),'commands'));};draw();return el('div',{},toolbar(searchBox(v=>{search=v;draw();},t('operationSearch'))),grid,...pageResults());}
   };
   function openOperation(operation){
     const fields=(operation.fields || []).map(field=>({...field,key:field.key || field.name}));
@@ -150,7 +151,7 @@ export function createPages(ctx) {
       }else{await perform(operation.name,actual,{download:['backup.export','sessions.export'].includes(operation.name)});close();}
     },t('run')),{wide:inputs.length>5});
   }
-  return {render(page){return views[page]?.() || views.overview();},resetFilters(){search='';filter='all';},clear(){results.clear();search='';filter='all';},perform};
+  return {render(page){const view=views[page]?.() || views.overview();view.classList.add('page-stack');return view;},resetFilters(){search='';filter='all';},clear(){results.clear();search='';filter='all';},perform};
 }
 function maskProxy(value){try{const u=new URL(value);if(u.username)u.username='••••';if(u.password)u.password='••••';return u.toString();}catch{return '••••••••';}}
 function asrResult(data){return el('div',{class:'asr-result'},el('h3',{},t('transcription')),el('pre',{class:'transcript'},data?.text || '—'),el('div',{class:'mini-stats'},stat(t('elapsed'),data?.duration_ms==null?'—':`${data.duration_ms} ms`),stat(t('audioDuration'),data?.audio_duration_ms==null?'—':`${data.audio_duration_ms} ms`),stat(t('rtf'),data?.rtf==null?'—':Number(data.rtf).toFixed(3))));}

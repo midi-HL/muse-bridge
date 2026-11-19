@@ -280,6 +280,12 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		for k, v := range vals {
 			out[k] = v
 		}
+		// A processor owns an immutable settings snapshot. Publish its replacement
+		// together with the accepted settings so ASR saves apply without restart.
+		processor, err := media.New(out, filepath.Join(s.dataDir, "media"))
+		if err != nil {
+			return nil, err
+		}
 		rollback := func(cause error) (any, error) {
 			var restoreErr error
 			if hook != nil {
@@ -313,6 +319,7 @@ func (s *Service) Action(ctx context.Context, name string, args map[string]any) 
 		}
 		s.settingsMu.Lock()
 		s.settings = out
+		s.media = processor
 		s.admission.update(settingInt(out, "limits.concurrency", 2), settingInt(out, "limits.queue_size", 20))
 		s.settingsMu.Unlock()
 		return publicSettings(out), nil

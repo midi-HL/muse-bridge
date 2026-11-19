@@ -12,8 +12,8 @@ export function createChat(ctx) {
     return el('article',{class:`message ${isUser?'message-user':'message-assistant'}`,dataset:{index}},el('div',{class:'message-meta'},el('span',{class:'message-avatar'},isUser?'你':'m'),el('strong',{},isUser?t('user'):role==='system'?t('systemMessage'):t('assistant')),message.time?el('time',{},date(message.time)):null),el('div',{class:'message-body'},message.text || (message.pending?t('thinking'):''),message.attachments?.length?el('div',{class:'attachment-list'},message.attachments.map(a=>el('span',{class:'attachment-chip'},icon('file'),a.filename))):null),message.attachment?attachmentView(message.attachment):null);
   }
   function attachmentView(attachment) { const label=attachment.filename || t('generatedFile');const link=attachment.id?el('a',{class:'file-result',href:`/admin/api/files/${encodeURIComponent(attachment.id)}`,download:label},icon('download'),label):el('span',{class:'file-result'},icon('file'),label); return link; }
-  let streamList, input, sendButton, stopButton, modelSelect, personaSelect, attachInput, attachmentPreview, status;
-  function renderMessages(){streamList.replaceChildren(...messages.map(bubble));streamList.scrollTop=streamList.scrollHeight;}
+  let streamList, input, sendButton, stopButton, modelSelect, personaSelect, attachInput, attachmentPreview, status, intro;
+  function renderMessages(){if(intro)intro.hidden=messages.length>0;streamList.replaceChildren(...messages.map(bubble));streamList.scrollTop=streamList.scrollHeight;}
   let historyRequest=0;
   const activePersonas=()=>((ctx.state?.personas || []).filter(persona=>persona.enabled!==false));
   function syncPersonaOptions(){
@@ -96,12 +96,13 @@ export function createChat(ctx) {
     input=el('textarea',{rows:1,placeholder:t('composerPlaceholder'),'aria-label':t('composerPlaceholder'),onKeyDown:event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}},onInput:event=>{event.target.style.height='auto';event.target.style.height=Math.min(event.target.scrollHeight,180)+'px';}});
     sendButton=button(t('send'),send,'primary','send');stopButton=button(t('stop'),stop,'danger','stop');stopButton.hidden=true;
     modelSelect=el('select',{value:model,'aria-label':t('model'),onChange:e=>model=e.target.value},['muse-spark','muse-image','muse-video','gpt-4o-mini'].map(v=>el('option',{value:v,text:v})));
+    modelSelect.value=model;
     personaSelect=el('select',{'aria-label':t('persona'),onChange:e=>selectPersona(e.target.value)});syncPersonaOptions();
     attachInput=el('input',{type:'file',multiple:true,accept:'image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv',class:'file-input',onChange:attach});attachmentPreview=el('div',{class:'attachment-preview'});status=el('span',{class:'composer-status','aria-live':'polite'});
     const composer=el('form',{class:'composer',onSubmit:e=>{e.preventDefault();return send();}},attachmentPreview,el('div',{class:'composer-input'},input),el('div',{class:'composer-tools'},el('label',{class:'icon-button attach-button','title':t('attach')},icon('attach'),attachInput),modelSelect,personaSelect,el('span',{class:'grow'}),status,stopButton,sendButton),el('small',{class:'composer-hint persona-hint'},t('personaWarning')),el('small',{class:'composer-hint'},t('sendHint')));
-    const intro=el('div',{class:'chat-intro'},el('span',{class:'brand-mark'},'m'),el('h2',{},t('chatWelcome')),el('p',{},t('chatWelcomeBody')));
+    intro=el('div',{class:'chat-intro'},el('img',{class:'brand-mark',src:'/admin/mark.svg',alt:''}),el('h2',{},t('chatWelcome')));
     if(messages.length)intro.hidden=true;
-    return el('div',{class:'chat-layout'},el('div',{class:'chat-topbar'},el('div',{},el('span',{class:'eyebrow'},t('chat')),el('h1',{},sessionTitle || t('newChat'))),el('div',{class:'top-actions'},modelSelect.cloneNode(true),button(t('newChat'),newChat,'secondary','plus'),button(t('export'),exportChat,'quiet','download'))),intro,streamList,composer);
+    return el('div',{class:'chat-layout'},el('div',{class:'chat-topbar'},el('h2',{},sessionTitle || t('newChat')),el('div',{class:'top-actions'},button(t('newChat'),newChat,'secondary','plus'),button(t('export'),exportChat,'quiet','download'))),intro,streamList,composer);
   }
   const page={render(){const node=build();streamList=node.querySelector('.message-list');const clonedModel=node.querySelector('.chat-topbar select');if(clonedModel){clonedModel.value=model;clonedModel.addEventListener('change',e=>model=e.target.value);}renderMessages();if(ctx.chatSessionId && ctx.chatSessionId!==sessionId){switchSession(ctx.chatSessionId);loadHistory(ctx.chatSessionId);}return node;},newChat,chooseSession,stop,refreshHistory,isSending:()=>sending};
   return page;

@@ -105,7 +105,7 @@ func (s *StreamEditor) editCurrent(ctx context.Context, text string) error {
 	if s.messageID == 0 {
 		return errors.New("telegram: stream message is unavailable")
 	}
-	if err := s.client.Edit(ctx, s.chatID, s.messageID, MarkdownHTML(text)); err != nil {
+	if err := s.client.Edit(ctx, s.chatID, s.messageID, text); err != nil {
 		return err
 	}
 	s.rendered = text
@@ -113,11 +113,12 @@ func (s *StreamEditor) editCurrent(ctx context.Context, text string) error {
 	return nil
 }
 func (s *StreamEditor) sendCurrent(ctx context.Context, text string) error {
-	id, err := s.client.Send(ctx, s.chatID, MarkdownHTML(text), true)
+	id, err := s.client.Send(ctx, s.chatID, text, false)
 	if err != nil {
 		return err
 	}
 	s.messageID = id
+	s.current = text
 	s.rendered = text
 	s.last = time.Now()
 	return nil

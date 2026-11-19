@@ -392,11 +392,18 @@ func (r Runner) accounts(ctx context.Context, c *client, args []string) error {
 		}
 		return r.print(v)
 	case "probe":
+		if len(args) > 2 {
+			return errors.New("usage: accounts probe [ID]")
+		}
 		id := ""
 		if len(args) > 1 {
 			id = args[1]
 		}
-		v, e := c.action(ctx, "accounts.probe", map[string]any{"id": id})
+		action := "accounts.probe"
+		if id == "" {
+			action = "protocol.probe"
+		}
+		v, e := c.action(ctx, action, map[string]any{"id": id})
 		if e != nil {
 			return e
 		}
@@ -469,29 +476,33 @@ func (r Runner) keys(ctx context.Context, c *client, args []string) error {
 		return errors.New("cannot create private output file; choose an absent path")
 	}
 	defer file.Close()
+	removeOutput := func() {
+		_ = file.Close()
+		_ = os.Remove(out)
+	}
 	v, e := c.action(ctx, "keys.create", map[string]any{"name": name, "rpm": rpm, "daily": daily})
 	if e != nil {
-		_ = os.Remove(out)
+		removeOutput()
 		return e
 	}
 	m, ok := v.(map[string]any)
 	if !ok {
-		_ = os.Remove(out)
+		removeOutput()
 		return errors.New("invalid key creation response")
 	}
 	key, _ := m["key"].(string)
 	if key == "" {
-		_ = os.Remove(out)
+		removeOutput()
 		return errors.New("key response was empty")
 	}
 	if _, e = io.WriteString(file, key+"\n"); e != nil {
 		_, _ = c.action(ctx, "keys.revoke", map[string]any{"id": m["id"]})
-		_ = os.Remove(out)
+		removeOutput()
 		return errors.New("key write failed; revocation attempted")
 	}
 	if e = file.Sync(); e != nil {
 		_, _ = c.action(ctx, "keys.revoke", map[string]any{"id": m["id"]})
-		_ = os.Remove(out)
+		removeOutput()
 		return errors.New("key sync failed; revocation attempted")
 	}
 	delete(m, "key")
@@ -524,14 +535,18 @@ func (r Runner) backup(ctx context.Context, c *client, args []string) error {
 			return errors.New("cannot create backup file")
 		}
 		defer f.Close()
+		removeOutput := func() {
+			_ = f.Close()
+			_ = os.Remove(file)
+		}
 		v, e := c.action(ctx, "backup.export", map[string]any{"passphrase": pass})
 		if e != nil {
-			_ = os.Remove(file)
+			removeOutput()
 			return e
 		}
 		m, ok := v.(map[string]any)
 		if !ok {
-			_ = os.Remove(file)
+			removeOutput()
 			return errors.New("invalid backup response")
 		}
 		blob, _ := m["content"].(string)
@@ -539,15 +554,15 @@ func (r Runner) backup(ctx context.Context, c *client, args []string) error {
 			blob, _ = m["blob"].(string)
 		}
 		if !strings.HasPrefix(blob, "MB1.") {
-			_ = os.Remove(file)
+			removeOutput()
 			return errors.New("service did not return an encrypted backup")
 		}
 		if _, e = io.WriteString(f, blob); e != nil {
-			_ = os.Remove(file)
+			removeOutput()
 			return errors.New("backup write failed")
 		}
 		if f.Sync() != nil {
-			_ = os.Remove(file)
+			removeOutput()
 			return errors.New("backup sync failed")
 		}
 		return r.print(map[string]any{"saved": true})

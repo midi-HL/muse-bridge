@@ -58,6 +58,25 @@ async function createHarness(options){
   const h=makeHarness(options);const {createChat}=await import('../static/chat.js');const page=createChat(h.ctx);const root=page.render();return {...h,page,root};
 }
 
+test('chat has a single working model selector and labelled icon-only actions',async()=>{
+  const h=await createHarness({});
+  assert.equal(h.root.querySelectorAll('select').filter(n=>n.getAttribute('aria-label')==='模型').length,1);
+  const {button}=await import('../static/core.js');
+  const refresh=button('刷新',()=>{},'icon-button','refresh');
+  assert.equal(refresh.getAttribute('aria-label'),'刷新');
+  assert.equal(refresh.textContent,'');
+});
+
+test('the first conversation hides the empty state and exposes its messages',async()=>{
+  const h=await createHarness({});
+  assert.equal(h.root.querySelector('.chat-intro').hidden,false);
+  await submit(h.root,'first message');
+  assert.equal(h.root.querySelector('.chat-intro').hidden,true);
+  assert.ok(h.root.querySelectorAll('.message-body').length>=2);
+  h.page.newChat();
+  assert.equal(h.root.querySelector('.chat-intro').hidden,false);
+});
+
 test('createChat sends persona only when explicitly selected',async()=>{
   const h=await createHarness({personas:[{id:'helpful',name:'Helpful'},{id:'off',name:'Disabled',enabled:false}]});
   const select=findByLabel(h.root,'人设');

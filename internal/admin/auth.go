@@ -84,6 +84,8 @@ func (a *Auth) Login(ctx context.Context, password, otp string) (string, string,
 	return a.newSession(ctx, r.Generation)
 }
 func (a *Auth) Setup(ctx context.Context, password, token string) (string, string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if !a.SetupRequired(ctx) {
 		return "", "", errors.New("administrator already configured")
 	}
