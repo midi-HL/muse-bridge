@@ -86,6 +86,12 @@
 - 修复前独立审查定位 API 路由漏记 API key RPM/Daily、完整提示词超限先扣聊天额度、HTTP附件重复解码、settings hook 失败可影响活动轮询、普通 Webhook 重投重复扣额、reset 后重放旧回答、reset 与 pending update 竞态、孤儿 pending 备份以及 SSE 写 deadline 到期。对应回归均新增并通过；最终独立复审的最后 P2 为 pending 备份恢复，已改为导入拒绝并由回归锁定。
 - 本地全库 Go、vet、Node 15 项与纯 Go 构建通过；`go test -race` 因本机 CGO/C 编译器不可用未执行，但同提交 CI 已通过 race、govulncheck 与 build。提交 `af3a47c461227f08eea6a676eeb27dacc39a2add` 已推送并发布为 `v0.1.34`；Release 七平台全过，正式 Windows amd64 SHA-256 `0f9007b1435e675753a80a6d50d881f75d5d7fbf72c9acc252be7eae01087197` 通过 sidecar、SHA256SUMS 和隔离 smoke。真实 Telegram/Muse E2E 未执行。
 
+## v0.1.35 Telegram `/usage` 候选
+
+- `/usage` 经现有 Telegram 命令授权/目标过滤，只读同一 Core `chat_day` 计数，按个人 sender 跨 chat 或匿名当前 chat 分桶；不允许传主体参数，不调用生成，不扣额度。响应明确标注本地统计而非 Muse 官方余额，存储错误不转换为零额度。
+- timezone 空串沿用 Go UTC；下次重置时间定位至 local date 首次变化，含 DST 跳过午夜场景。真实 Store close/reopen、身份隔离、匿名分桶、日界、参数拒绝、Webhook 重投和无额外生成均有回归。
+- 独立只读复审无 P1/P2/P3 finding，所要求 Core/bridge/store 包测试通过。全库 Go、vet、Node 15 项与纯 Go构建通过。候选尚未提交、未跑 CI/Release，真实 Bot E2E仍待凭证。
+
 ## 残余风险和诚实限制
 
 - 没有在 CI 或仓库使用真实 Muse Cookie，因此真实 Muse、Telegram Bot、ASR 云端和节点环境的 E2E 未被伪造为通过。

@@ -30,18 +30,29 @@ func chatDailySubject(req ChatRequest) (string, error) {
 	return secure.Digest(platform + "\x00" + owner), nil
 }
 
-func chatDailyPeriod(settings map[string]any, now time.Time) (string, error) {
+func chatDailyLocation(settings map[string]any) (string, *time.Location, error) {
 	zone, _ := settings["general.timezone"].(string)
-	periodZone := zone
-	if periodZone == "" {
-		periodZone = "UTC"
+	if zone == "" {
+		zone = "UTC"
 	}
 	location, err := time.LoadLocation(zone)
 	if err != nil {
-		return "", errors.New("configured chat quota time zone is invalid")
+		return "", nil, errors.New("configured chat quota time zone is invalid")
 	}
+	return zone, location, nil
+}
+
+func chatDailyPeriod(settings map[string]any, now time.Time) (string, error) {
+	zone, location, err := chatDailyLocation(settings)
+	if err != nil {
+		return "", err
+	}
+	return chatDailyBucket(zone, now.In(location)), nil
+}
+
+func chatDailyBucket(zone string, local time.Time) string {
 	// Keep each zone's daily window distinct when the administrator changes it.
-	return periodZone + ":" + now.In(location).Format("2006-01-02"), nil
+	return zone + ":" + local.Format(time.DateOnly)
 }
 
 // ValidateAttachmentMetadata performs bounded local preflight before transport

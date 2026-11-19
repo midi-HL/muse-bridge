@@ -186,13 +186,38 @@ func (h *telegramServiceHandler) command(ctx context.Context, r telegram.Request
 	case "persona":
 		text, err := h.service.TelegramPersonas(ctx, session, strconv.FormatInt(r.UserID, 10), cmd.Args)
 		return telegram.Response{Text: text}, err
+	case "usage":
+		return h.usage(ctx, r, cmd.Args)
 	case "help":
-		return telegram.Response{Text: "/new 新会话\n/sessions [页码] 本聊天的本地会话\n/switch 会话ID 切换本聊天会话\n/rename 名称 重命名当前会话（仅创建者）\n/history 当前会话最近 10 条消息\n/stop 停止生成\n/status 查看状态\n/retry 重试上一条请求\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
-	case "tasks", "usage":
+		return telegram.Response{Text: "/new 新会话\n/sessions [页码] 本聊天的本地会话\n/switch 会话ID 切换本聊天会话\n/rename 名称 重命名当前会话（仅创建者）\n/history 当前会话最近 10 条消息\n/stop 停止生成\n/status 查看状态\n/usage 查看本地每日聊天额度\n/retry 重试上一条请求\n/persona 查看人设，/persona ID 切换，/persona none 关闭\n/help 查看帮助\n/tasks 当前上游协议未暴露此能力。"}, nil
+	case "tasks":
 		return telegram.Response{}, telegram.ErrUnsupported
 	default:
 		return telegram.Response{Text: "未知命令，发送 /help 查看可用命令。"}, nil
 	}
+}
+
+func (h *telegramServiceHandler) usage(ctx context.Context, r telegram.Request, args string) (telegram.Response, error) {
+	if strings.TrimSpace(args) != "" {
+		return telegram.Response{Text: "/usage 不接受参数，只能查询自己的本地每日额度。"}, nil
+	}
+	u, err := h.service.TelegramUsage(ctx, r.ChatID, r.UserID)
+	if err != nil {
+		if ctx.Err() != nil {
+			return telegram.Response{}, ctx.Err()
+		}
+		return telegram.Response{Text: "暂时无法读取本地额度，请稍后发送新的 /usage 命令。"}, nil
+	}
+	scope := "个人"
+	if r.UserID == 0 {
+		scope = "本聊天匿名发送者共享"
+	}
+	limit, remaining := "不限", "不限"
+	if u.Limit > 0 {
+		limit = strconv.Itoa(u.Limit)
+		remaining = strconv.Itoa(max(0, u.Limit-u.Used))
+	}
+	return telegram.Response{Text: fmt.Sprintf("本地每日聊天额度（%s）\n已用：%d\n上限：%s\n剩余：%s\n重置：%s（%s）\n这不是 Muse 官方账号额度。", scope, u.Used, limit, remaining, u.ResetsAt.Format("2006-01-02 15:04 -07:00"), u.Timezone)}, nil
 }
 
 func (h *telegramServiceHandler) Sticker(context.Context, string) (telegram.StickerAsset, error) {

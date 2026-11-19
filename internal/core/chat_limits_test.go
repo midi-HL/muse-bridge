@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/midi-HL/muse-bridge/internal/hatch"
 	"github.com/midi-HL/muse-bridge/internal/store"
@@ -142,6 +143,33 @@ func TestChatQuotaPeriodMatchesConfiguredTimezoneIncludingEmptyUTC(t *testing.T)
 			t.Fatalf("zone %q period=%q err=%v want=%q", tc.zone, got, err, tc.want)
 		}
 	}
+}
+
+func TestNextChatDayRespectsDSTBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		zone     string
+		at       time.Time
+		want     time.Duration
+		wantDate int
+	}{{"America/Los_Angeles", time.Date(2026, 3, 8, 0, 0, 0, 0, mustZone(t, "America/Los_Angeles")), 23 * time.Hour, 9}, {"America/Sao_Paulo", time.Date(2018, 11, 3, 12, 0, 0, 0, mustZone(t, "America/Sao_Paulo")), 12 * time.Hour, 4}} {
+		loc := mustZone(t, tc.zone)
+		next := nextChatDay(tc.at)
+		if got := next.Sub(tc.at); got != tc.want {
+			t.Fatalf("zone %s day duration=%v want=%v", tc.zone, got, tc.want)
+		}
+		if y, m, d := next.In(loc).Date(); y != tc.at.In(loc).Year() || m != tc.at.In(loc).Month() || d != tc.wantDate {
+			t.Fatalf("zone %s next local date=%04d-%02d-%02d", tc.zone, y, m, d)
+		}
+	}
+}
+
+func mustZone(t *testing.T, name string) *time.Location {
+	t.Helper()
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		t.Skip(err)
+	}
+	return loc
 }
 
 func TestChatQueueCancellationDoesNotConsumeQuota(t *testing.T) {

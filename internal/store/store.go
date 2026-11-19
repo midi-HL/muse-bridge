@@ -173,9 +173,18 @@ func (s *Store) Increment(ctx context.Context, scope, subject, period string, li
 var ErrLimit = errors.New("request limit reached")
 
 func (s *Store) Count(ctx context.Context, scope, subject, period string) int {
-	var n int
-	_ = s.db.QueryRowContext(ctx, "SELECT count FROM counters WHERE scope=? AND subject=? AND period=?", scope, subject, period).Scan(&n)
+	n, _ := s.ReadCounter(ctx, scope, subject, period)
 	return n
+}
+
+// ReadCounter treats a missing bucket as unused without hiding storage errors.
+func (s *Store) ReadCounter(ctx context.Context, scope, subject, period string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, "SELECT count FROM counters WHERE scope=? AND subject=? AND period=?", scope, subject, period).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return n, err
 }
 func (s *Store) Log(ctx context.Context, level, message string) error {
 	_, e := s.db.ExecContext(ctx, "INSERT INTO events(time,level,message) VALUES(?,?,?)", time.Now().UTC().Format(time.RFC3339), level, message)

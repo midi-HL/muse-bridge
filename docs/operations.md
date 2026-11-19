@@ -38,6 +38,7 @@
 - `limits.daily_per_user` 在身份、会话归属、人设、附件和最终提示词本地校验并取得并发准入令牌后扣额；额度提交后的上游失败或超时也计一次，0 表示不限。Web `/chat` 按管理员身份，CLI/OpenAI 兼容 API 按已认证 API key ID，Telegram 按发送者 ID 计数；匿名 Telegram 消息按 chat ID。API key 自身的 RPM/Daily 限额和用量另行计数，在 HTTP 请求结构校验之后、进入 Core 前扣记；Core 每用户每日额度与该 key 限额互相独立。
 - 每日额度和查询共用 `general.timezone` 的本地日期（时区变更后新周期名也改变）。超限请求返回稳定限流错误，在模型调用及成功历史写入之前拒绝。
 - `limits.concurrency` 和 `limits.queue_size` 是运行时生效的 FIFO 聊天准入设置。并发更新不取消已有请求；缩小时不驱逐已有排队者，但拒绝新排队请求。队列满返回 `queue_full`；等待者取消会退出队列并归还令牌。Web/API SSE 和 Telegram 流式接口发出非对话排队状态，状态不进入 prompt、用户历史或日额度。
+- Telegram `/usage` 只查询本程序的 Core 本地额度，非 Muse 官方额度接口；个人按发送者 ID 跨聊天共享，匿名发送者按当前 chat 共享。显示使用量、上限、剩余与配置时区的下次日界；`/usage` 不接受主体参数、不扣额。存储错误会返回明确的暂时不可用提示，不伪报零。
 
 ## 账号节点、流量分池和人设
 

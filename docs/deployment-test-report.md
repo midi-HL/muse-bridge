@@ -10,7 +10,13 @@
 - 本机：Windows amd64，Go 1.27.4；CGO-free 发布构建。
 - 数据目录：本地冒烟使用隔离临时目录，测试后停止服务；未写入仓库。
 
-## v0.1.34 聊天限流、排队与 Telegram 重投保护
+## v0.1.35 候选：Telegram `/usage`
+
+- `/usage` 经 Webhook/轮询共用命令路径，按当前发送者读取 Core SQLite `chat_day` 计数：个人跨聊天共享、匿名按 chat 共享；任何参数均拒绝。回复显示本地已用/上限/剩余、配置时区下次重置，并明确这不是 Muse 官方额度；0 上限显示不限。读取错误不伪报零、不扣额度。
+- 同一配置时区 period helper 与聊天扣额共用；空时区按 UTC，DST 通过日期变化计算重置点。跨真实 Store 关闭重开、跨身份、匿名 chat 隔离、额度变化、错误读取、Webhook 目标/白名单/重投和 DST 边界均有回归。
+- `go vet ./...`、全库 `go test -count=1 -timeout=90s ./...`、Node 前端 15 项及纯 Go Windows build 通过；独立复审 `/usage` 无 P1–P3 问题。尚未提交该候选版本、未运行该提交 CI/Release；真实 Bot E2E 仍待部署机凭证。
+
+## v0.1.34 聊天限流、排队与 Telegram 重投保护（已发布）
 
 - 新增 `limits.daily_per_user` 的持久化计数，按可信 Web/API/Telegram 身份及 `general.timezone` 本地日期隔离；0 不限。通过身份、会话、人设、完整提示词及附件本地校验并获得并发准入后计一次，上游失败仍计。API key 自身 RPM/Daily 仍独立计数。
 - `limits.concurrency`/`limits.queue_size` 热更新为 FIFO 准入；排队取消释放等待位，Web/API SSE 与 Telegram 显示独立 queue state，不进入 prompt/history。CLI stream 和 non-stream 对 `daily_limit`/`queue_full` 显示固定、无服务端文本回显的错误。
