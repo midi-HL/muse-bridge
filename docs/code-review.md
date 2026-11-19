@@ -84,7 +84,7 @@
 - 修复 queue/update 和取消边界：FIFO permit 有取消结算状态；SSE 每帧写 deadline 后清除；Telegram 只显示 queued event，status 编辑使用请求 context 且限 2 秒，失败不终止生成。settings.update 对锁后/调用 hook 前/调用 hook 后都检查取消；先持久化，再切换 Telegram 运行时 adapter，hook 失败用独立限时上下文回滚；API key counters 在请求结构与附件元数据校验后 charge。
 - Telegram update_id 按稳定 chat/update/message/sender 身份去重，红elivery使用缓存结果，不因 `/new` 或 `/switch` 重新绑定当前 session 而重生成。reset 会将关联记录标为 invalidated 并清除缓存文本；备份边界校验新记录类型。
 - 修复前独立审查定位 API 路由漏记 API key RPM/Daily、完整提示词超限先扣聊天额度、HTTP附件重复解码、settings hook 失败可影响活动轮询、普通 Webhook 重投重复扣额、reset 后重放旧回答、reset 与 pending update 竞态、孤儿 pending 备份以及 SSE 写 deadline 到期。对应回归均新增并通过；最终独立复审的最后 P2 为 pending 备份恢复，已改为导入拒绝并由回归锁定。
-- 本地全库 Go、vet、Node 15 项与纯 Go 构建通过；`go test -race` 因本机 CGO/C 编译器不可用未执行，待 CI。当前仍未提交、未推送、未建标签；真实 Telegram/Muse E2E 未执行。
+- 本地全库 Go、vet、Node 15 项与纯 Go 构建通过；`go test -race` 因本机 CGO/C 编译器不可用未执行，但同提交 CI 已通过 race、govulncheck 与 build。提交 `af3a47c461227f08eea6a676eeb27dacc39a2add` 已推送并发布为 `v0.1.34`；Release 七平台全过，正式 Windows amd64 SHA-256 `0f9007b1435e675753a80a6d50d881f75d5d7fbf72c9acc252be7eae01087197` 通过 sidecar、SHA256SUMS 和隔离 smoke。真实 Telegram/Muse E2E 未执行。
 
 ## 残余风险和诚实限制
 

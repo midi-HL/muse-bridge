@@ -17,7 +17,9 @@
 - Telegram 同一 update_id 有持久结果，普通 Webhook/轮询重投不重复生成或扣聊天额度。sessions.reset 会将该会话的 update 记录清空响应文本并标记 invalidated。若 Telegram 已接受响应而进程在本地提交 delivered/result 前退出，仍可能重复展示已接受输出。
 - 回归覆盖 API key RPM/Daily 与伪造身份、跨 API 端点共用额度、Web admin 限额、Telegram sender 跨群隔离与 retry、相同 webhook update 重投（含 `/new` 后重投）、reset 失效及 pending update reset 冲突、拒绝导入孤儿 pending 备份、并发调整/取消、提示词与附件校验、持久化重启和空时区 UTC。额外 stress：Core 限额/队列重复 50 次，HTTP API 额度重复 20 次，Telegram replay/跨群额度重复 10 次，Telegram reset/backup 边界重复 20 次。
 - 本机 Windows amd64：`gofmt`、`go vet ./...`、`go test -count=1 -timeout=90s ./...`、Node 15 项、`CGO_ENABLED=0 go build` 与 `git diff --check` 全通过。`go test -race` 未能运行：本机 CGO/C 编译器未启用；需依赖 CI runner 的竞态检查。
-- 尚未创建本版本提交/标签，亦未运行 GitHub CI 或 Release。无真实 Telegram Bot/Muse 凭证，真实端到端仍待部署机验证。
+- 源码提交 `af3a47c461227f08eea6a676eeb27dacc39a2add` 已推送至 `main` 并标记 `v0.1.34`。同一提交 CI [44461176406](https://github.com/midi-HL/muse-bridge/actions/runs/44461176406) format/web/vet/unit/race/govulncheck/build 全过；Release [44461179885](https://github.com/midi-HL/muse-bridge/actions/runs/44461179885) 七平台 build、校验和及 publish 全过。
+- 正式 Windows amd64 SHA-256 `0f9007b1435e675753a80a6d50d881f75d5d7fbf72c9acc252be7eae01087197` 与 release sidecar 和 `SHA256SUMS` 一致。`smoke-security.ps1` 对该正式产物通过启动、设密、管理 Schema、密钥脱敏、API key 认证、缺失文件拒绝及嵌入式 UI HTTP。
+- 无真实 Telegram Bot/Muse 凭证，真实端到端仍待部署机验证；本机 race 因 CGO 未启用未运行，竞态检查由同提交 CI 通过。
 
 ## v0.1.33 Telegram 本地会话管理
 
