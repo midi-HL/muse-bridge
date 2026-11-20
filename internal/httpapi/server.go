@@ -369,6 +369,10 @@ func errorInfo(e error) (int, string, string) {
 	var he *hatch.Error
 	if errors.As(e, &he) {
 		switch he.Kind {
+		case "pending_vm":
+			return 503, "pending_vm", "Muse workspace is not running yet"
+		case "network":
+			return 502, "upstream_unavailable", "Muse connection is unavailable"
 		case "unsupported":
 			return 501, "unsupported", "Upstream does not expose this operation"
 		case "auth":

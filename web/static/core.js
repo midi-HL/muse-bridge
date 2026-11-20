@@ -3,6 +3,8 @@ export const API = '/admin/api';
 let csrf = '';
 export function setCSRF(value) { csrf = value || ''; }
 export class APIError extends Error { constructor(message, status = 0, fields = {}) { super(message); this.status = status; this.fields = fields; } }
+const serviceErrorMessage = error => ({pending_vm:'workspaceNotRunning',upstream_auth:'upstreamAuthFailed',upstream_unavailable:'upstreamUnavailable',upstream_rate_limit:'upstreamRateLimited'}[error?.code] || '');
+export function apiErrorMessage(error, fallback='') { const key=serviceErrorMessage(error);return (key?t(key):'') || error?.message || fallback; }
 export async function request(path, options = {}) {
   const {body, signal, method = body === undefined ? 'GET' : 'POST'} = options;
   let response;
@@ -10,7 +12,7 @@ export async function request(path, options = {}) {
   catch (error) { if (error.name === 'AbortError') throw error; throw new APIError(t('networkError')); }
   let data;
   try { data = await response.json(); } catch { throw new APIError(`${t('failed')} (${response.status})`, response.status); }
-  if (!response.ok || data.error || data.ok === false) throw new APIError(data.error?.message || `${t('failed')} (${response.status})`, response.status, data.error?.fields || {});
+  if (!response.ok || data.error || data.ok === false) throw new APIError(apiErrorMessage(data.error,`${t('failed')} (${response.status})`), response.status, data.error?.fields || {});
   if (data.csrf_token) setCSRF(data.csrf_token);
   return data;
 }
@@ -50,7 +52,8 @@ Object.assign(paths,{
   personas:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M13 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0 M20 8v6 M17 11h6',
   settings:'m9.5 3-.6 2.4-2.1 1.2-2.4-.7L2 10.1 3.8 12l-.1 2.4L2 16.3l2.4 4.1 2.5-.7 2 1.2.6 2.4h4.8l.6-2.4 2-1.2 2.5.7 2.4-4.1-1.8-1.9V12l1.8-1.9-2.4-4.2-2.4.7-2.1-1.2L14.3 3h-4.8Z M15.5 13a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0',
   send:'m21 3-6 18-4-8-8-4 18-6ZM11 13 21 3',
-  logout:'M9 4H4v16h5 M10 12h11 M17 8l4 4-4 4'
+  logout:'M9 4H4v16h5 M10 12h11 M17 8l4 4-4 4',
+  attach:'m20.5 11.5-8.8 8.8a5.8 5.8 0 0 1-8.2-8.2l9.5-9.5a3.9 3.9 0 0 1 5.5 5.5L9 17.6a1.9 1.9 0 0 1-2.7-2.7l8.8-8.8'
 });
 export function icon(name, className = '') { const svg = document.createElementNS('http://www.w3.org/2000/svg','svg'); for (const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',class:`icon ${className}`})) svg.setAttribute(key,value); const p = document.createElementNS(svg.namespaceURI,'path'); p.setAttribute('d', paths[name] || paths.commands); svg.append(p); return svg; }
 export function button(label, onClick, kind = 'secondary', iconName) { const compact=kind.split(' ').includes('icon-button');return el('button',{type:'button',class:`button ${kind}`,onClick,...(compact?{'aria-label':label,title:label}:{})}, iconName ? icon(iconName) : null, compact?null:label); }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 class FixtureNode {
   constructor(tag, namespaceURI='http://www.w3.org/1999/xhtml') {
-    this.tagName=tag.toUpperCase();this.namespaceURI=namespaceURI;this.children=[];this.attributes={};this.listeners={};this.dataset={};this.style={};this.className='';this.value='';this._textContent='';this.disabled=false;this.hidden=false;this.files=[];
+    this.tagName=tag.toUpperCase();this.namespaceURI=namespaceURI;this.children=[];this.attributes={};this.listeners={};this.dataset={};this.style={};this.className='';this.value='';this._textContent='';this.disabled=false;this.hidden=false;this.files=[];this.clicks=0;
   }
   get textContent(){return this._textContent || this.children.map(child=>child.textContent).join('');}
   set textContent(value){this._textContent=String(value);this.children=[];}
@@ -14,7 +14,7 @@ class FixtureNode {
   getAttribute(name){return this.attributes[name] ?? null;}
   get scrollHeight(){return 0;}
   focus(){}
-  click(){}
+  click(){this.clicks++;}
   cloneNode(deep=false){const copy=new FixtureNode(this.tagName,this.namespaceURI);Object.assign(copy,{...this,children:[],listeners:{},attributes:{...this.attributes},dataset:{...this.dataset},style:{...this.style}});if(deep)copy.children=this.children.map(child=>child.cloneNode(true));return copy;}
   dispatch(type,event={}){const listener=this.listeners[type];if(!listener)return;return listener({target:this,preventDefault(){},...event});}
   querySelector(selector){return this.querySelectorAll(selector)[0] || null;}
@@ -75,6 +75,45 @@ test('the first conversation hides the empty state and exposes its messages',asy
   assert.ok(h.root.querySelectorAll('.message-body').length>=2);
   h.page.newChat();
   assert.equal(h.root.querySelector('.chat-intro').hidden,false);
+});
+
+test('rounded composer uses one-line compact persona and a delegated file button',async()=>{
+  const h=await createHarness({personas:[{id:'work',name:'Work persona'}]});
+  const {readFile}=await import('node:fs/promises');
+  const css=await readFile(new URL('../static/style.css',import.meta.url),'utf8');
+  assert.match(css,/[.]composer\s*\{[^}]*border-radius:13px/s);
+  assert.match(css,/[.]composer:focus-within\s*\{[^}]*box-shadow:/s);
+  assert.match(css,/[.]composer-input textarea:focus-visible[^}]*outline:none/s);
+  assert.match(css,/[.]composer-tools select[.]composer-select\s*\{[^}]*text-overflow:ellipsis/s);
+  const persona=findByLabel(h.root,'人设');
+  assert.equal(persona.children[0].textContent,'默认');
+  const attach=h.root.querySelector('.attach-button');
+  const file=h.root.querySelector('.file-input');
+  assert.equal(file.hidden,true);
+  attach.dispatch('click');
+  assert.equal(file.clicks,1);
+});
+
+test('selecting an empty persona override stays in the same composer row',async()=>{
+  const h=await createHarness({personas:[{id:'long',name:'A deliberately very long persona preset name for truncation'}]});
+  const select=findByLabel(h.root,'人设');
+  assert.equal(select.children[0].textContent,'默认');
+  assert.equal(select.children[1].textContent,'无');
+  assert.match(select.children[2].textContent,/deliberately very long/);
+  select.value='_none';select.dispatch('change');
+  assert.equal(select.value,'_none');
+  const css=await (await import('node:fs/promises')).readFile(new URL('../static/style.css',import.meta.url),'utf8');
+  assert.match(css,/[.]composer-tools\s*\{[^}]*flex-wrap:nowrap/s);
+  assert.match(css,/[.]composer-tools select[.]composer-select\s*\{[^}]*text-overflow:ellipsis/s);
+});
+
+test('stopping a response does not disable stop for the next response',async()=>{
+  const h=await createHarness({chat:(_body,signal)=>new Response(new ReadableStream({start(controller){signal.addEventListener('abort',()=>controller.error(new DOMException('Stopped','AbortError')),{once:true});}}),{headers:{'Content-Type':'text/event-stream'}})});
+  const first=submit(h.root,'first');
+  await h.page.stop();await first;
+  const second=submit(h.root,'second');
+  assert.equal(h.root.querySelectorAll('button').find(node=>node.textContent==='停止').disabled,false);
+  await h.page.stop();await second;
 });
 
 test('createChat sends persona only when explicitly selected',async()=>{

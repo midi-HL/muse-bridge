@@ -23,7 +23,7 @@ export function createPages(ctx) {
       if(data?.requires_restart)ctx.notify(language==='zh'?'备份已导入，重启服务后生效。':'Backup imported. Restart the service to apply it.');
       if(ctx.page===page)ctx.renderContent();
       return data;
-    } catch(error){results.set(key,{error:true,data:error.message});if(ctx.page===page)ctx.renderContent();ctx.handleError(error);throw error;}
+    } catch(error){if(name==='accounts.probe')await ctx.refresh(false).catch(()=>{});results.set(key,{error:true,data:error.message});if(ctx.page===page)ctx.renderContent();ctx.handleError(error);throw error;}
   }
   const run=(name,args,opts)=>()=>perform(name,args,opts).catch(()=>{});
   async function danger(name,args,title,opts){if(await confirmAction(title))await perform(name,args,opts).catch(()=>{});}
@@ -73,7 +73,7 @@ export function createPages(ctx) {
   function scheduleForm(schedule={}) {edit(schedule.id?t('edit'):t('scheduleAdd'),[f('name','name','string',{required:true}),f('enabled','enabled','boolean'),f('platform','platform','select',{options:['telegram','web']}),f('target','target','string',{required:true,description:t('targetHint')}),f('prompt','prompt','textarea',{required:true}),f('cron','cron','string',{required:true,description:t('cronHint'),pattern:'^\\S+\\s+\\S+\\s+\\S+\\s+\\S+\\s+\\S+$'}),f('timezone','timezone','string',{required:true})],{enabled:true,platform:'telegram',cron:'0 9 * * *',timezone:'Asia/Kuala_Lumpur',...schedule},'schedules.save',args=>({...args,...(schedule.id?{id:schedule.id}:{})}));}
   const views={
     overview(){
-      const s=ctx.state, accounts=s.accounts || [], stats=s.stats || {}, healthy=accounts.filter(a=>a.status==='ok').length;
+      const s=ctx.state, accounts=s.accounts || [], stats=s.stats || {}, healthy=accounts.filter(a=>a.enabled!==false&&['ok','available'].includes(a.status)).length;
       const protocol=stats.protocol_status ?? stats.protocol?.status ?? s.protocol?.status ?? 'unknown';
       const health=accounts.length?el('div',{class:'health-list'},accounts.slice(0,8).map(a=>el('div',{class:'health-row'},el('span',{class:'avatar small'},String(nameOf(a)).slice(0,1)),el('div',{class:'grow'},el('strong',{},nameOf(a)),el('small',{class:'muted block'},date(a.last_probe_at || a.last_probe))),badge(a.status)))):empty(t('quickStart'),t('quickStartBody'),button(t('accountImport'),()=>accountImport(),'primary','plus'),'accounts');
       return el('div',{},el('div',{class:'stats-grid'},stat(t('healthyAccounts'),`${healthy} / ${accounts.length}`,t('accountHealth'),'accounts'),stat(t('messagesToday'),stats.messages_today ?? stats.today_messages,t('messagesToday'),'chat'),stat(t('errorRate'),stats.error_rate==null?'—':`${(stats.error_rate*100).toFixed(1)}%`,t('recent'),'logs'),stat(t('activeSessions'),stats.active_sessions ?? (s.sessions || []).length,t('sessions'),'sessions')),
@@ -81,10 +81,10 @@ export function createPages(ctx) {
         card(t('quickActions'),el('div',{class:'quick-grid'},[['chat','chat'],['accountImport','accounts'],['platforms','platforms'],['commands','commands']].map(([label,page])=>button(t(label),()=>page==='accounts'?accountImport():ctx.navigate(page),'quick-action',page)))),
         (s.capabilities || []).length?card(t('capabilities'),el('div',{class:'capability-grid'},s.capabilities.map(c=>el('div',{class:'capability'},el('div',{class:'split'},el('strong',{},schemaText(c,'feature') || c.name),badge(c.status)),el('p',{class:'muted'},schemaText(c,'detail'))))),t('capabilityNote')):null,...pageResults());
     },
-    accounts(){const s=ctx.state;const select=el('select',{'aria-label':t('status'),onChange:e=>{filter=e.target.value;ctx.renderContent();}},['all','ok','unknown','pending_vm','invalid','disabled'].map(v=>el('option',{value:v,text:t(v)})));select.value=filter;
+    accounts(){const s=ctx.state;const select=el('select',{'aria-label':t('status'),onChange:e=>{filter=e.target.value;ctx.renderContent();}},['all','available','ok','unknown','pending_vm','invalid','error','disabled'].map(v=>el('option',{value:v,text:t(v)})));select.value=filter;
       return el('div',{},listPage(s.accounts || [],[
         {label:t('account'),render:a=>el('div',{},el('strong',{},nameOf(a)),el('small',{class:'muted block'},a.note || a.id))},
-        {label:t('status'),render:a=>badge(a.status || (a.enabled?'unknown':'disabled'))},
+        {label:t('status'),render:a=>{const state=a.enabled===false?'disabled':(a.status || 'unknown');const b=badge(state);const detailKey=a.enabled===false?'':['workspaceNotRunning','upstreamAuthFailed','probeNetworkFailed','probeProtocolFailed','upstreamRateLimited','accountProbeFailed'].includes(a.last_error)?a.last_error:(a.last_error==='account probe failed'?'probeAgainNeeded':'');b.title=detailKey?t(detailKey):'';return el('div',{},b,detailKey?el('small',{class:'muted block'},t(detailKey)):null);}},
         {label:t('credentials'),render:a=>el('div',{},el('code',{},'••••••••'),el('small',{class:'muted block'},a.configured===false?t('notConfigured'):t('configured')))},
         {label:t('node'),render:a=>text(s.nodes?.find(n=>n.id===a.node_id)?.name || (a.node_id || (language==='zh'?'默认连接':'Default connection')))},
         {label:t('quota'),render:a=>text(a.quota ?? a.quota_cache)},

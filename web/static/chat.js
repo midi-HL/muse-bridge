@@ -1,4 +1,4 @@
-import {el,icon,button,chatStream,action,stopChat,readFile,download,APIError} from './core.js';
+import {el,icon,button,chatStream,action,stopChat,readFile,download,APIError,apiErrorMessage} from './core.js';
 import {t,date} from './i18n.js';
 import {card,note,dialog,confirmAction} from './ui.js';
 export function createChat(ctx) {
@@ -12,7 +12,7 @@ export function createChat(ctx) {
     return el('article',{class:`message ${isUser?'message-user':'message-assistant'}`,dataset:{index}},el('div',{class:'message-meta'},el('span',{class:'message-avatar'},isUser?'你':'m'),el('strong',{},isUser?t('user'):role==='system'?t('systemMessage'):t('assistant')),message.time?el('time',{},date(message.time)):null),el('div',{class:'message-body'},message.text || (message.pending?t('thinking'):''),message.attachments?.length?el('div',{class:'attachment-list'},message.attachments.map(a=>el('span',{class:'attachment-chip'},icon('file'),a.filename))):null),message.attachment?attachmentView(message.attachment):null);
   }
   function attachmentView(attachment) { const label=attachment.filename || t('generatedFile');const link=attachment.id?el('a',{class:'file-result',href:`/admin/api/files/${encodeURIComponent(attachment.id)}`,download:label},icon('download'),label):el('span',{class:'file-result'},icon('file'),label); return link; }
-  let streamList, input, sendButton, stopButton, modelSelect, personaSelect, attachInput, attachmentPreview, status, intro;
+  let streamList, input, sendButton, stopButton, modelSelect, personaSelect, attachInput, attachButton, attachmentPreview, status, intro;
   function renderMessages(){if(intro)intro.hidden=messages.length>0;streamList.replaceChildren(...messages.map(bubble));streamList.scrollTop=streamList.scrollHeight;}
   let historyRequest=0;
   const activePersonas=()=>((ctx.state?.personas || []).filter(persona=>persona.enabled!==false));
@@ -22,6 +22,7 @@ export function createChat(ctx) {
     const selectedExists=personaId===''||personaId==='_none'||activePersonas().some(persona=>String(persona.id)===personaId);
     if(!selectedExists)options.push(el('option',{value:personaId,text:`${t('personaUnavailable')}: ${personaId}`,disabled:true}));
     personaSelect.replaceChildren(...options);personaSelect.value=personaId;
+    personaSelect.title=options.find(option=>option.value===personaId)?.text || t('persona');
   }
   function setPersona(value){personaId=value;syncPersonaOptions();}
   function selectPersona(value){personaId=value;personaSelectionGeneration++;personaDirty=true;syncPersonaOptions();if(status)status.textContent='';}
@@ -53,7 +54,7 @@ export function createChat(ctx) {
     if(sending){ctx.notify(t('cancelGeneration'),true);return;}
     sessionGeneration++;historyRequest++;personaSelectionGeneration++;personaDirty=false;sessionId=id();sessionTitle='';personaId='';syncPersonaOptions();ctx.chatSessionId=sessionId;messages=[];renderMessagesIfReady();input?.focus();
   }
-  function setSending(value) { sending=value;sendButton.disabled=value;stopButton.hidden=!value;input.disabled=value;attachInput.disabled=value;modelSelect.disabled=value;personaSelect.disabled=value; }
+  function setSending(value) { sending=value;sendButton.disabled=value;stopButton.hidden=!value;stopButton.disabled=false;input.disabled=value;attachInput.disabled=value;attachButton.disabled=value;modelSelect.disabled=value;personaSelect.disabled=value; }
   async function stop(){if(!sending)return;stopButton.disabled=true;status.textContent=t('stopping');try{await stopChat(sessionId);}catch(error){ctx.notify(error.message,true);}finally{controller?.abort();controller=null;setSending(false);status.textContent=t('chatStopped');}}
   async function send(){
     const prompt=input.value.trim();if(!prompt && !attachments.length)return;if(sending)return;
@@ -70,7 +71,7 @@ export function createChat(ctx) {
       if(event.session_id && event.session_id!==sessionId){sessionId=event.session_id;ctx.chatSessionId=sessionId;}
       if(event.type==='error'){
         if(event.error?.code==='cancelled')throw new DOMException(t('chatStopped'),'AbortError');
-        throw new Error(event.text || t('chatFailed'));
+        throw new Error(apiErrorMessage(event.error,event.text || t('chatFailed')));
       }
       if(event.type==='delta'){assistant.text+=(event.text || '');assistant.pending=false;renderMessages();}else if(event.type==='queued'||event.type==='status'){status.textContent=event.text || t('thinking');}else if(event.type==='attachment'&&event.attachment){assistant.attachment=event.attachment;renderMessages();}else if(event.type==='done'){assistant.pending=false;if(selectedPersonaGeneration===personaSelectionGeneration)personaDirty=false;status.textContent=t('success');renderMessages();}
     },controller.signal); if(generation===sessionGeneration&&assistant.pending){assistant.pending=false;status.textContent=t('streamInterrupted');} }
@@ -95,11 +96,12 @@ export function createChat(ctx) {
     streamList=el('div',{class:'message-list',role:'log','aria-live':'polite'});
     input=el('textarea',{rows:1,placeholder:t('composerPlaceholder'),'aria-label':t('composerPlaceholder'),onKeyDown:event=>{if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send();}},onInput:event=>{event.target.style.height='auto';event.target.style.height=Math.min(event.target.scrollHeight,180)+'px';}});
     sendButton=button(t('send'),send,'primary','send');stopButton=button(t('stop'),stop,'danger','stop');stopButton.hidden=true;
-    modelSelect=el('select',{value:model,'aria-label':t('model'),onChange:e=>model=e.target.value},['muse-spark','muse-image','muse-video','gpt-4o-mini'].map(v=>el('option',{value:v,text:v})));
+    modelSelect=el('select',{value:model,'aria-label':t('model'),class:'composer-select model-select',onChange:e=>model=e.target.value},['muse-spark','muse-image','muse-video','gpt-4o-mini'].map(v=>el('option',{value:v,text:v})));
     modelSelect.value=model;
-    personaSelect=el('select',{'aria-label':t('persona'),onChange:e=>selectPersona(e.target.value)});syncPersonaOptions();
-    attachInput=el('input',{type:'file',multiple:true,accept:'image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv',class:'file-input',onChange:attach});attachmentPreview=el('div',{class:'attachment-preview'});status=el('span',{class:'composer-status','aria-live':'polite'});
-    const composer=el('form',{class:'composer',onSubmit:e=>{e.preventDefault();return send();}},attachmentPreview,el('div',{class:'composer-input'},input),el('div',{class:'composer-tools'},el('label',{class:'icon-button attach-button','title':t('attach')},icon('attach'),attachInput),modelSelect,personaSelect,el('span',{class:'grow'}),status,stopButton,sendButton),el('small',{class:'composer-hint persona-hint'},t('personaWarning')),el('small',{class:'composer-hint'},t('sendHint')));
+    personaSelect=el('select',{'aria-label':t('persona'),class:'composer-select persona-select',title:'',onChange:e=>selectPersona(e.target.value)});syncPersonaOptions();
+    attachInput=el('input',{type:'file',multiple:true,accept:'image/*,audio/*,video/*,.pdf,.txt,.md,.json,.csv',class:'file-input',hidden:true,onChange:attach});attachmentPreview=el('div',{class:'attachment-preview'});status=el('span',{class:'composer-status','aria-live':'polite'});
+    attachButton=button(t('attach'),()=>attachInput.click(),'icon-button attach-button','attach');
+    const composer=el('form',{class:'composer',onSubmit:e=>{e.preventDefault();return send();}},attachmentPreview,el('div',{class:'composer-input'},input),el('div',{class:'composer-tools'},attachButton,attachInput,modelSelect,personaSelect,el('span',{class:'grow'}),status,stopButton,sendButton),el('small',{class:'composer-hint'},t('sendHint')));
     intro=el('div',{class:'chat-intro'},el('img',{class:'brand-mark',src:'/admin/mark.svg',alt:''}),el('h2',{},t('chatWelcome')));
     if(messages.length)intro.hidden=true;
     return el('div',{class:'chat-layout'},el('div',{class:'chat-topbar'},el('h2',{},sessionTitle || t('newChat')),el('div',{class:'top-actions'},button(t('newChat'),newChat,'secondary','plus'),button(t('export'),exportChat,'quiet','download'))),intro,streamList,composer);

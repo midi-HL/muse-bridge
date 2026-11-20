@@ -412,6 +412,28 @@ func accountEligible(e *entry, platform string, split bool) bool {
 	}
 }
 
+// upstreamAccountFailure stores only a safe, translatable diagnostic code.
+func upstreamAccountFailure(err error) (status, message string) {
+	var protocolErr *hatch.Error
+	if errors.As(err, &protocolErr) {
+		switch protocolErr.Kind {
+		case "auth":
+			return "invalid", "upstreamAuthFailed"
+		case "pending_vm":
+			return "pending_vm", "workspaceNotRunning"
+		case "network":
+			return "error", "probeNetworkFailed"
+		case "rate_limit":
+			return "error", "upstreamRateLimited"
+		case "unsupported":
+			return "error", "unsupported"
+		case "protocol":
+			return "error", "probeProtocolFailed"
+		}
+	}
+	return "error", "accountProbeFailed"
+}
+
 func (p *Pool) finishLease(e *entry, generation uint64, c *hatch.Client, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -427,11 +449,10 @@ func (p *Pool) finishLease(e *entry, generation uint64, c *hatch.Client, err err
 	e.LastUsedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	e.UpdatedAt = e.LastUsedAt
 	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		e.LastError = "account request failed"
-		e.Status = "error"
+		e.Status, e.LastError = upstreamAccountFailure(err)
 	} else if err == nil {
 		e.LastError = ""
-		if e.Status == "error" {
+		if e.Enabled {
 			e.Status = "available"
 		}
 	}
@@ -468,7 +489,7 @@ func (p *Pool) Probe(ctx context.Context, id string) (Account, error) {
 			generation := e.generation
 			a := e.Account
 			p.mu.Unlock()
-			_, probeErr := c.Probe(ctx)
+			probeResult, probeErr := c.Probe(ctx)
 			p.mu.Lock()
 			if p.closed || p.accounts[id] != e || e.removed {
 				p.mu.Unlock()
@@ -488,10 +509,12 @@ func (p *Pool) Probe(ctx context.Context, id string) (Account, error) {
 				return snap, probeErr
 			}
 			if probeErr != nil {
-				e.Status = "error"
-				e.LastError = "account probe failed"
+				e.Status, e.LastError = upstreamAccountFailure(probeErr)
 			} else {
-				e.Status = "available"
+				e.Status = probeResult.Status
+				if e.Status == "" || e.Status == "ok" {
+					e.Status = "available"
+				}
 				e.LastError = ""
 			}
 			e.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)

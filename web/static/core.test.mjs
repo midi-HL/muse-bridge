@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {SSEDecoder, coerceField, redact} from './core.js';
+import {SSEDecoder, coerceField, redact, request} from './core.js';
 
 test('SSEDecoder handles chunked UTF-8 event boundaries and CRLF', () => {
   const events = [];
@@ -32,4 +32,14 @@ test('scheduled message refresh contract is present', async () => {
 test('redact masks sensitive fields while retaining configured status', () => {
   assert.deepEqual(redact({token:{configured:true,masked:'••••'}, note:'visible'}), {token:{configured:true,masked:'••••'},note:'visible'});
   assert.deepEqual(redact({api_key:'plaintext'}), {api_key:'••••••••'});
+});
+
+test('classified Muse probe failures are localized without replacing their category',async()=>{
+  const original=globalThis.fetch;
+  try{
+    for(const [code,expected] of [['pending_vm','Muse 工作区尚未运行'],['upstream_auth','Muse 账号认证失败'],['upstream_unavailable','Muse 连接暂不可用']]){
+      globalThis.fetch=async()=>new Response(JSON.stringify({error:{code,message:'synthetic server message'}}),{status:503,headers:{'Content-Type':'application/json'}});
+      await assert.rejects(request('/action',{body:{}}),error=>error.message.includes(expected));
+    }
+  }finally{globalThis.fetch=original;}
 });

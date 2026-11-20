@@ -115,6 +115,51 @@ func TestUpdatePersistsRoutingFieldsAndRejectsInvalidInputAtomically(t *testing.
 	}
 }
 
+func TestProbePreservesPendingWorkspaceAndAuthenticationClassification(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		statusCode int
+		body       string
+		wantStatus string
+		wantError  string
+	}{
+		{name: "workspace pending", statusCode: http.StatusOK, body: "{\"status\":\"unassigned\"}", wantStatus: "pending_vm", wantError: "workspaceNotRunning"},
+		{name: "cookie authentication rejected", statusCode: http.StatusUnauthorized, body: "{}", wantStatus: "invalid", wantError: "upstreamAuthFailed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/session" {
+					t.Errorf("unexpected probe route %q", r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+			p, err := New(routingTestStore(t), hatch.Config{BaseURL: server.URL, HTTPClient: server.Client()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer p.Close()
+			if err := p.Add(context.Background(), Account{ID: "classified", Enabled: true}, map[string]string{"hatch_sess": "synthetic-session"}); err != nil {
+				t.Fatal(err)
+			}
+			got, probeErr := p.Probe(context.Background(), "classified")
+			if probeErr == nil {
+				t.Fatal("expected probe failure")
+			}
+			if got.Status != test.wantStatus || got.LastError != test.wantError {
+				t.Fatalf("status=%q last_error=%q; want %q/%q", got.Status, got.LastError, test.wantStatus, test.wantError)
+			}
+			if persisted := p.List()[0]; persisted.Status != test.wantStatus || persisted.LastError != test.wantError {
+				t.Fatalf("classification was not persisted: %#v", persisted)
+			}
+		})
+	}
+}
+
 func TestPoolRoutingAndLegacyPoolDefault(t *testing.T) {
 	db := routingTestStore(t)
 	p, err := New(db, hatch.Config{})

@@ -168,3 +168,29 @@ td strong { font-weight:550; }
   .log-row pre { grid-column:1/-1; }
   .stats-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
+
+
+/* Composer controls stay on one line; focus is expressed on the rounded surface. */
+.composer { border-radius:13px; transition:border-color .15s, box-shadow .15s; }
+.composer:focus-within { border-color:var(--brand); box-shadow:0 0 0 3px color-mix(in srgb,var(--brand) 22%,transparent); }
+.composer-input textarea:focus-visible,.composer-tools select:focus-visible,.composer-tools .attach-button:focus-visible { outline:none; }
+.composer-input textarea:focus { outline:none; box-shadow:none; }
+.composer-tools { flex-wrap:nowrap; min-width:0; }
+.composer-tools select.composer-select { min-width:0; min-height:34px; height:34px; max-height:34px; flex:0 1 auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.composer-tools .model-select { width:126px; max-width:126px; flex:0 0 126px; }
+.composer-tools .persona-select { width:156px; max-width:156px; flex:0 1 156px; }
+.composer-tools select.composer-select selectedcontent { min-width:0; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.composer-tools .attach-button { flex:0 0 34px; position:relative; border-radius:9px; }
+.composer-tools .attach-button .icon { width:19px; height:19px; }
+.composer-tools .attach-button:focus-visible { background:var(--surface2); color:var(--brand); }
+.composer-tools select:focus-visible { border-color:var(--brand); }
+.composer-tools .composer-status { min-width:0; max-width:180px; flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.composer-tools .file-input[hidden] { display:none !important; }
+.account-diagnostic { max-width:220px; margin-top:4px; font-size:11px; line-height:1.35; }
+@media(max-width:720px) {
+  .composer-tools select.composer-select { font-size:11px; gap:6px; padding:5px 7px; }
+  .composer-tools .model-select { width:108px; max-width:108px; flex-basis:108px; }
+  .composer-tools .persona-select { width:132px; max-width:132px; flex-basis:132px; }
+  .composer-tools .composer-status { flex:0 1 auto; flex-basis:auto; order:0; max-width:76px; }
+  .composer-tools .file-input[hidden] { display:none !important; }
+}
