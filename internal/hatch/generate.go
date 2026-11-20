@@ -166,6 +166,7 @@ func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Ev
 	seen := make(map[string]bool)
 	sequenceOrder := make([]string, 0, 4096)
 	seenMedia := make(map[string]bool)
+	attribution := generationAttribution{nodeID: req.NodeID}
 	var output strings.Builder
 	var done map[string]any
 	var doneAt time.Time
@@ -209,16 +210,27 @@ func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Ev
 		if payload == nil || name == "res" {
 			continue
 		}
-		device := text(object(payload["chat_context"]), "device_id")
-		if device != "" && device != req.NodeID {
+		ours, resources := attribution.accept(name, payload)
+		if !ours {
 			continue
 		}
-		ours := device == req.NodeID
-		switch name {
-		case "delta.text_append":
-			if !ours {
+		for _, a := range resources {
+			if seenMedia[a.Path] {
 				continue
 			}
+			if len(seenMedia) >= 128 {
+				err = fault("protocol", "generate", "too many generated attachments")
+				return
+			}
+			seenMedia[a.Path] = true
+			result.Attachments = append(result.Attachments, a)
+			attachment := a
+			if err = send(Event{Type: "attachment", Attachment: &attachment}); err != nil {
+				return
+			}
+		}
+		switch name {
+		case "delta.text_append":
 			delta := text(payload, "text")
 			if output.Len()+len(delta) > maxResponseBytes {
 				err = fault("protocol", "generate", "generated text exceeds limit")
@@ -232,25 +244,9 @@ func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Ev
 				}
 			}
 		case "delta.presentation", "delta.message_done", "delta.tool_done", "delta.placeholder":
-			resources := mediaCandidates(payload, 0)
-			for _, a := range resources {
-				if seenMedia[a.Path] {
-					continue
-				}
-				if len(seenMedia) >= 128 {
-					err = fault("protocol", "generate", "too many generated attachments")
-					return
-				}
-				seenMedia[a.Path] = true
-				result.Attachments = append(result.Attachments, a)
-				attachment := a
-				if err = send(Event{Type: "attachment", Attachment: &attachment}); err != nil {
-					return
-				}
-			}
-			if name == "delta.message_done" && (ours || (mediaMode && len(result.Attachments) > 0)) {
+			if name == "delta.message_done" {
 				status := text(payload, "status")
-				if ours && status != "" && status != "completed" {
+				if status != "" && status != "completed" {
 					err = fault("protocol", "generate", "upstream generation did not complete")
 					return
 				}
@@ -260,10 +256,8 @@ func (c *Client) Generate(ctx context.Context, req GenerateRequest, emit func(Ev
 				}
 			}
 		case "delta.message_removed":
-			if ours {
-				err = fault("protocol", "generate", "upstream removed the generation")
-				return
-			}
+			err = fault("protocol", "generate", "upstream removed the generation")
+			return
 		}
 		matched := false
 		for _, a := range result.Attachments {

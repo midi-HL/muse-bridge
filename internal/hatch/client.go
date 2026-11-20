@@ -199,7 +199,10 @@ func (c *Client) session(ctx context.Context) (map[string]any, error) {
 }
 func ready(s map[string]any) bool {
 	v := strings.ToUpper(text(s, "vm_state"))
-	return text(s, "status") == "assigned" && text(s, "endpoint_url") != "" && text(s, "vm_id") != "" && (v == "" || v == "RUNNING")
+	// UNKNOWN is a missing control-plane observation, not evidence that an
+	// assigned gateway is stopped. Let the authenticated Noise transport and
+	// ping establish reachability; keep the upstream state unchanged for UI.
+	return text(s, "status") == "assigned" && text(s, "endpoint_url") != "" && text(s, "vm_id") != "" && (v == "" || v == "RUNNING" || v == "UNKNOWN")
 }
 func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 	session, err := c.session(ctx)

@@ -18,14 +18,16 @@ import (
 )
 
 type mockHatch struct {
-	mu          sync.Mutex
-	files       map[string][]byte
-	paths       []string
-	wsURL       string
-	server      *httptest.Server
-	wsReady     chan struct{}
-	delayEvents bool
-	wsErr       chan error
+	mu              sync.Mutex
+	files           map[string][]byte
+	paths           []string
+	wsURL           string
+	server          *httptest.Server
+	wsReady         chan struct{}
+	delayEvents     bool
+	wsErr           chan error
+	subscribeEvents []map[string]any
+	streamEvents    func(string) []map[string]any
 }
 
 func newMockHatch(t *testing.T) *mockHatch {
@@ -257,6 +259,10 @@ func (m *mockHatch) wsHandler(w http.ResponseWriter, r *http.Request) {
 		if pathName == "/chat/subscribe" {
 			subID = frame
 			sendResponse(ctx, ws, tx, frame, 200, []byte(`{"status":"ok","payload":{"capabilities":[]}}`+"\n"), false)
+			for _, event := range m.subscribeEvents {
+				encoded, _ := json.Marshal(event)
+				sendBodyChunk(ctx, ws, tx, subID, append(encoded, '\n'), false)
+			}
 			continue
 		}
 		if pathName == "/chat/stream" {
@@ -264,6 +270,14 @@ func (m *mockHatch) wsHandler(w http.ResponseWriter, r *http.Request) {
 			node := requestNode(requestBody)
 			if m.delayEvents {
 				time.Sleep(150 * time.Millisecond)
+			}
+			if m.streamEvents != nil {
+				events := m.streamEvents(node)
+				for i, event := range events {
+					encoded, _ := json.Marshal(event)
+					sendBodyChunk(ctx, ws, tx, subID, append(encoded, '\n'), i == len(events)-1)
+				}
+				continue
 			}
 			event := func(name, text string) []byte {
 				return []byte(`{"event":"` + name + `","payload":{"chat_context":{"device_id":"` + node + `"},"text":"` + text + `"}}`)

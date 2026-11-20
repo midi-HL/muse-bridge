@@ -2,9 +2,9 @@
 
 | 能力 | 协议层证据 | Web / 命令入口 | 结论 |
 |---|---|---|---|
-| 文本生成 | `POST /chat/subscribe`、`POST /chat/stream`，Noise XX + protobuf 帧 | `/admin/api/chat`、`/v1/chat/completions`、`muse-bridge chat` | 已实现并有离线双端模拟测试 |
+| 文本生成 | `POST /chat/subscribe`、`POST /chat/stream`，Noise XX + protobuf 帧 | `/admin/api/chat`、`/v1/chat/completions`、`muse-bridge chat` | 已实现；2026-11-20 原导入 Cookie 经修复后的协议客户端真实回复通过，正式部署入口验收见真实聊天报告 |
 | 流式更新 | `delta.text_append`、`delta.message_done` 事件 | 管理台 SSE、Telegram适配层、OpenAI SSE | 已实现；Telegram/API平台限制可能不同 |
-| 图片/视频生成 | 同一 `chat/stream` 的模型别名与 presentation 资源 | Web聊天/API模型选择 | 已实现协议与文件取回；需真实账号验证资源形态 |
+| 图片/视频生成 | 同一 `chat/stream` 的模型别名与 presentation 资源 | Web聊天/API模型选择 | 图片生成与文件取回于 2026-11-20 真实验证；视频仍需真实验收。媒体只接收可归属本轮任务的事件 |
 | 文件上传 | `/fs/write`、`/fs/stat`、`/fs/rename`，分片写入并校验大小 | Web附件、core Chat | 已实现并有模拟测试 |
 | 生成物下载 | `/fs/read`，分片读取与 EOF/长度校验 | `/files/{id}`、Web聊天附件 | 已实现 |
 | 心跳 | `/api/ping` | 周期连接保活 | 已实现 |
