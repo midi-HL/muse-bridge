@@ -209,7 +209,9 @@ func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !ready(session) {
+	// UNKNOWN can describe either a reachable or a sleeping gateway. Request
+	// its normal wake even though it is eligible for a transport attempt.
+	if !ready(session) || strings.EqualFold(text(session, "vm_state"), "UNKNOWN") {
 		if text(session, "vm_id") == "" {
 			return nil, fault("pending_vm", "connect", "workspace is not assigned")
 		}
@@ -218,6 +220,8 @@ func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 		if errors.As(wakeErr, &he) && (he.Kind == "auth" || he.Kind == "rate_limit") {
 			return nil, wakeErr
 		}
+	}
+	if !ready(session) {
 		// VM wake is asynchronous. Poll for a bounded period with backoff so a
 		// slow but valid workspace is not reported pending after only two seconds.
 		pollDeadline := time.Now().Add(25 * time.Second)
@@ -264,30 +268,52 @@ func (c *Client) connectOnce(ctx context.Context) (*connection, error) {
 	if name := text(session, "vm_name"); name != "" {
 		body["vmName"] = name
 	}
-	token, err := c.bootstrap(ctx, "POST", "/api/hatch/token", body)
-	if err != nil {
-		return nil, err
-	}
-	if text(token, "token") == "" {
-		return nil, fault("protocol", "connect", "bootstrap returned no token")
-	}
-	if strings.HasPrefix(text(token, "notary_token"), "delegation.") {
-		return nil, fault("unsupported", "connect", "delegation endorsement is not supported")
-	}
-	u, _ := url.Parse(c.cfg.WSURL)
-	q := u.Query()
-	q.Set("vm_id", text(session, "vm_id"))
-	q.Set("auth_token", text(token, "token"))
-	q.Set("app_id", "hatch-web")
-	q.Set("request_id", newID())
-	if v := text(token, "notary_token"); v != "" {
-		q.Set("notary_token", v)
-	}
-	u.RawQuery = q.Encode()
-	hdr := http.Header{"Origin": {"https://muse.ai"}, "User-Agent": {userAgent}, "Accept-Language": {"en-US,en-GB;q=0.9,en;q=0.8"}, "Cache-Control": {"no-cache"}, "Pragma": {"no-cache"}}
-	ws, resp, err := websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: hdr, CompressionMode: websocket.CompressionDisabled})
-	if err != nil {
+	var ws *websocket.Conn
+	gatewayDeadline := time.Now().Add(25 * time.Second)
+	for attempt := 0; ; attempt++ {
+		token, err := c.bootstrap(ctx, "POST", "/api/hatch/token", body)
+		if err != nil {
+			return nil, err
+		}
+		if text(token, "token") == "" {
+			return nil, fault("protocol", "connect", "bootstrap returned no token")
+		}
+		if strings.HasPrefix(text(token, "notary_token"), "delegation.") {
+			return nil, fault("unsupported", "connect", "delegation endorsement is not supported")
+		}
+		u, _ := url.Parse(c.cfg.WSURL)
+		q := u.Query()
+		q.Set("vm_id", text(session, "vm_id"))
+		q.Set("auth_token", text(token, "token"))
+		q.Set("app_id", "hatch-web")
+		q.Set("request_id", newID())
+		if v := text(token, "notary_token"); v != "" {
+			q.Set("notary_token", v)
+		}
+		u.RawQuery = q.Encode()
+		hdr := http.Header{"Origin": {"https://muse.ai"}, "User-Agent": {userAgent}, "Accept-Language": {"en-US,en-GB;q=0.9,en;q=0.8"}, "Cache-Control": {"no-cache"}, "Pragma": {"no-cache"}}
+		var resp *http.Response
+		ws, resp, err = websocket.Dial(ctx, u.String(), &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: hdr, CompressionMode: websocket.CompressionDisabled})
+		if err == nil {
+			break
+		}
 		if resp != nil && resp.StatusCode != 101 {
+			if resp.Body != nil {
+				_ = resp.Body.Close()
+			}
+			// Wake acknowledgement can precede gateway readiness. Retry only a
+			// transient upgrade failure for this UNKNOWN workspace, obtaining a
+			// fresh ticket each time. No Noise or generation message is replayed.
+			if strings.EqualFold(text(session, "vm_state"), "UNKNOWN") && (resp.StatusCode == 502 || resp.StatusCode == 503) && time.Now().Before(gatewayDeadline) {
+				backoff := time.Duration(1<<minInt(attempt, 3)) * 500 * time.Millisecond
+				if remaining := time.Until(gatewayDeadline); backoff > remaining {
+					backoff = remaining
+				}
+				if err := delay(ctx, backoff); err != nil {
+					return nil, err
+				}
+				continue
+			}
 			return nil, statusError("handshake", resp.StatusCode)
 		}
 		return nil, contextError("handshake", ctx.Err())
